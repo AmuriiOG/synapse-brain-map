@@ -51,12 +51,31 @@ function churnFiles(sessions, files, { max = 10 } = {}) {
     .sort((a, b) => b[1].n - a[1].n).slice(0, max).map(shape(files, sessions));
 }
 
+// Mistakes Claude keeps making: the same tool error (same signature) 3+ times in one project,
+// and tool calls you keep rejecting. Claude can't see this — each session starts fresh.
+function repeatedMistakes(sessions, { minTimes = 3, max = 12 } = {}) {
+  const groups = new Map();
+  sessions.forEach((s, si) => (s.errors || []).forEach((e) => {
+    if (!e.sig || (!e.denied && (e.sig.match(/[a-z]/gi) || []).length < 8)) return;   // "#:#:#" says nothing
+    const key = s.cwd + "|" + e.tool + "|" + (e.denied ? "denied:" + e.input.split(/\s+/).slice(0, 2).join(" ") : e.sig);
+    let g = groups.get(key);
+    if (!g) groups.set(key, g = { area: s.cwd, tool: e.tool, sig: e.sig, denied: e.denied, count: 0, sessions: new Set(), days: new Set(), last: 0, example: e });
+    g.count++; g.sessions.add(si); g.days.add(new Date(e.t || 0).toDateString());
+    if ((e.t || 0) >= g.last) { g.last = e.t || 0; g.example = e; }
+  }));
+  return [...groups.values()].filter((g) => g.count >= minTimes)
+    .sort((a, b) => b.count - a.count).slice(0, max)
+    .map((g) => ({ area: g.area, tool: g.tool, sig: g.sig, denied: g.denied, count: g.count, sessions: g.sessions.size, days: g.days.size, last: g.last,
+      input: g.example.input, text: g.example.text }));
+}
+
 function suggestions(data) {
   return {
     prompts: repeatedPrompts(data.sessions),
     rereads: rereadFiles(data.sessions, data.files),
     churn: churnFiles(data.sessions, data.files),
+    mistakes: repeatedMistakes(data.sessions),
   };
 }
 
-module.exports = { suggestions, repeatedPrompts, rereadFiles, churnFiles, normPrompt };
+module.exports = { suggestions, repeatedPrompts, rereadFiles, churnFiles, repeatedMistakes, normPrompt };

@@ -35,6 +35,20 @@ at(1100, () => {   // next turn: Bash never gets a result (permission prompt), R
 });
 at(1300, () => line({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t3", content: "ok" }] } }));
 
+// a SECOND session (another log file) edits the same file -> conflict; then it gets stuck
+const log2 = path.join(proj, "b2c3d4e5-0000.jsonl");
+const line2 = (o) => fs.appendFileSync(log2, JSON.stringify({ cwd: CWD, timestamp: new Date().toISOString(), ...o }) + "\n");
+at(1600, () => line2({ type: "assistant", message: { content: [{ type: "tool_use", id: "s0", name: "Edit", input: { file_path: CWD + "/src/jump.cs" } }] } }));
+at(2000, () => {
+  line2({ type: "cost-state", totalCostUSD: 3.0 });
+  for (let i = 1; i <= 8; i++) line2({ type: "assistant", message: { content: [{ type: "tool_use", id: "e" + i, name: "Edit", input: { file_path: CWD + "/src/loop.cs" } }] } });
+  for (let i = 1; i <= 4; i++) {
+    line2({ type: "assistant", message: { content: [{ type: "tool_use", id: "b" + i, name: "Bash", input: { command: "npm test" } }] } });
+    line2({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "b" + i, is_error: true, content: "Exit code 1\nError: Cannot find module './util" + i + ".js'" }] } });
+  }
+  line2({ type: "cost-state", totalCostUSD: 15.5 });
+});
+
 at(6500, () => {
   live.stop();
   if (process.env.V) console.log(JSON.stringify(got));
@@ -43,9 +57,16 @@ at(6500, () => {
   ok(got.some((e) => e.type === "prompt" && e.text === "add a jump button"), "new prompt reported");
   ok(got.some((e) => e.type === "touch" && e.k === "edit" && e.p.endsWith("/src/jump.cs")), "edit reported with normalized path");
   ok(got.some((e) => e.type === "touch" && e.k === "read" && e.p.endsWith("/readme.md")), "line split across writes reported once complete");
-  ok(got.every((e) => e.session === "abcdef12"), "session id attached");
+  ok(got.every((e) => ["abcdef12", "b2c3d4e5"].includes(e.session)), "session id attached");
+  const conf = got.filter((e) => e.type === "conflict");
+  ok(conf.length === 1 && conf[0].p.endsWith("/src/jump.cs") && conf[0].session === "b2c3d4e5" && conf[0].other === "abcdef12", "conflict: two sessions edited jump.cs (reported once)");
+  const stuck = got.filter((e) => e.type === "stuck"), why = stuck.map((e) => e.reason).sort().join(",");
+  ok(stuck.some((e) => e.reason === "edit-loop" && e.detail.p.endsWith("/src/loop.cs") && e.detail.times === 8), "stuck: same file edited 8 times");
+  ok(stuck.some((e) => e.reason === "same-error" && e.detail.times === 4 && e.detail.tool === "Bash"), "stuck: same error 4 times (paths/numbers ignored)");
+  ok(stuck.some((e) => e.reason === "cost-burn" && e.detail.usd >= 12), "stuck: cost rose $12.50 in minutes");
+  ok(stuck.every((e) => e.session === "b2c3d4e5"), "only the stuck session is flagged (" + why + ")");
   ok(got.some((e) => e.type === "turn-end" && /All done/.test(e.text)), "Claude finishing its turn is reported (your turn)");
-  const waits = got.filter((e) => e.type === "tool-waiting");
+  const waits = got.filter((e) => e.type === "tool-waiting" && e.session === "abcdef12");
   ok(waits.length === 1 && waits[0].tool === "Bash", "an unanswered tool is reported once as waiting (Bash); answered ones are not");
   fs.rmSync(root, { recursive: true, force: true });
   console.log(fail ? `${fail} failed` : "all passed");

@@ -97,6 +97,19 @@ function demoData(now = Date.now()) {
   const authNote = memories.findIndex((m) => m.name === "auth-tokens");
   shares.push({ to: A("mobile-app").key, kind: "share", target: memories[authNote].p, from: null, mem: authNote });
 
+  // a few mistakes Claude repeats (shows up under Suggestions -> repeated mistakes)
+  const { errorSignature } = require("./claude");
+  const MISTAKES = [
+    ["api-server", "Edit", "src/routes/orders.ts", "<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>", 7],
+    ["space-shooter", "Bash", "npm run build -- --scene \"Boss Fight", "Exit code 2\n/usr/bin/bash: -c: line 1: unexpected EOF while looking for matching `\"'", 5],
+    ["web-dashboard", "Bash", "npm test", "Exit code 1\nError: Cannot find module './setupTests.js'", 4],
+    ["mobile-app", "Bash", "flutter clean && rm -rf build", "The user doesn't want to proceed with this tool use. The tool use was rejected.", 3],
+  ];
+  for (const [proj, tool, input, text, n] of MISTAKES) {
+    const ss = sessions.filter((x) => x.cwd === A(proj).key);
+    for (let i = 0; i < n; i++) { const x = ss[i % ss.length]; (x.errors = x.errors || []).push({ t: x.start + i * HOUR, tool, input, sig: errorSignature(text), text, denied: /doesn.t want to proceed/.test(text) }); }
+  }
+
   // health, computed the same way the real scanner does (simplified)
   memories.forEach((m, i) => {
     const used = links.filter((l) => l.m === i);
@@ -110,7 +123,7 @@ function demoData(now = Date.now()) {
 
   const data = { generated: now, days: 60, demo: true, config: {}, areas, sessions, commits, files, links, memories, shares };
   data.suggestions = suggestions(data);
-  sessions.forEach((x) => delete x.promptList);
+  sessions.forEach((x) => { delete x.promptList; x.errorCount = (x.errors || []).length; delete x.errors; });
   return data;
 }
 
@@ -122,6 +135,8 @@ function demoLiveTick(data, rnd = Math.random) {
   const evs = [];
   if (rnd() < .05) return [{ type: "turn-end", session: s.id, cwd: s.cwd, t: Date.now(), text: "Done — the tests pass and the changelog is updated." }];
   if (rnd() < .025) return [{ type: "tool-waiting", session: s.id, cwd: s.cwd, t: Date.now(), tool: "Bash", since: Date.now() - 31000 }];
+  if (rnd() < .012) { const o = data.sessions.find((x) => x.cwd === s.cwd && x !== s) || s, f = fs[0]; return [{ type: "conflict", session: s.id, cwd: s.cwd, t: Date.now(), p: f.p, other: o.id, otherCwd: o.cwd, ago: 4 * 60e3 }]; }
+  if (rnd() < .01) return [{ type: "stuck", session: s.id, cwd: s.cwd, t: Date.now(), reason: "edit-loop", detail: { p: fs[1 % fs.length].p, times: 9, minutes: 10 } }];
   if (rnd() < .18) evs.push({ type: "prompt", session: s.id, cwd: s.cwd, t: Date.now(), text: ["make the boss attack faster", "add tests for the webhook retry", "why is the chart flickering?", "add a dark mode toggle", "speed up the import job"][Math.floor(rnd() * 5)] });
   const f = fs[Math.floor(rnd() * fs.length)];
   evs.push({ type: "touch", session: s.id, cwd: s.cwd, t: Date.now(), p: f.p, k: rnd() < .5 ? "edit" : "read", tool: "Edit" });

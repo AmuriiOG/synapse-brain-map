@@ -67,6 +67,21 @@ function plan(fix) {
     }
   }
 
+  if (fix.type === "rule") {        // save a lesson as a new memory note (+ its line in MEMORY.md)
+    const { area } = fix;
+    const slug = String(fix.name || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50);
+    if (!slug) throw new Error("give the rule a short name");
+    const rule = String(fix.rule || "").trim();
+    if (!rule) throw new Error("write the rule Claude should follow");
+    const dir = path.dirname(area.memIndex), file = path.join(dir, slug + ".md");
+    if (fs.existsSync(file)) throw new Error(`a note called ${slug} already exists`);
+    const desc = String(fix.description || rule).replace(/\s+/g, " ").slice(0, 150);
+    changes.push({ file, label: `create memory note "${slug}"`, before: null,
+      after: `---\nname: ${slug}\ndescription: ${desc}\nmetadata:\n  type: feedback\n---\n\n${rule}\n\n**Why:** ${String(fix.why || "").trim()}\n**How to apply:** follow this before using ${fix.tool || "the tool"} in this project.\n` });
+    const before = read(area.memIndex) || "", eol = eolOf(before);
+    change(area.memIndex, (before && !before.endsWith("\n") ? before + eol : before) + `- [${slug}](${slug}.md) — ${desc}` + eol, "list it in MEMORY.md so new sessions see it");
+  }
+
   if (fix.type === "command") {
     const slug = String(fix.name || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
     if (!slug) throw new Error("give the command a name");

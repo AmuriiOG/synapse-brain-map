@@ -1,7 +1,7 @@
 {
   "name": "synapse-brain-map",
   "productName": "Synapse",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A living map of your Claude Code projects: sessions, files, commits and memory — and link memory between projects.",
   "main": "src/main.js",
   "author": {

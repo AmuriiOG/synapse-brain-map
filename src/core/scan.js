@@ -10,7 +10,7 @@ const { suggestions } = require("./insights");
 
 const DAY = 864e5;
 // bump when the shape of scan() output changes, so caches from older versions are ignored
-const SCHEMA = 2;
+const SCHEMA = 3;
 const words = (s) => new Set(String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2));
 const jaccard = (a, b) => { if (!a.size || !b.size) return 0; let n = 0; for (const x of a) if (b.has(x)) n++; return n / (a.size + b.size - n); };
 
@@ -161,7 +161,7 @@ function scan(configPath = null, onProgress = () => {}) {
   const data = { schema: SCHEMA, generated: Date.now(), days: DAYS, config: cfg, areas, sessions, commits, files, links, memories, shares };
   onProgress("looking for suggestions");
   data.suggestions = suggestions(data);
-  sessions.forEach((s) => delete s.promptList);          // prompts are only needed for the suggestions
+  sessions.forEach((s) => { delete s.promptList; s.errorCount = (s.errors || []).length; delete s.errors; });   // only needed for the suggestions
   return data;
 }
 

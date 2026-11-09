@@ -41,6 +41,7 @@ function writeConfig(cfg) {
   clean.teamFolders = (cfg.teamFolders || []).filter((t) => t && t.path && fs.existsSync(t.path)).map((t) => ({ name: String(t.name || path.basename(t.path)), path: String(t.path) }));
   clean.maxFilesPerProject = Math.max(200, Math.min(20000, Number(cfg.maxFilesPerProject) || 4000));
   clean.alerts = cfg.alerts !== false;
+  clean.stuckUsd = Math.max(1, Math.min(1000, Number(cfg.stuckUsd) || 10));
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(clean, null, 2));
   return clean;
@@ -96,7 +97,7 @@ ipcMain.handle("get-settings", () => {
   return { config: readConfig(), presets: Object.fromEntries(Object.entries(PRESETS).map(([k, v]) => [k, { label: v.label, dirs: v.dirs }])),
     paths: { claudeHome: C.CLAUDE_HOME, userData: app.getPath("userData"), backups: backupDir() }, mcp, version: app.getVersion() };
 });
-ipcMain.handle("set-settings", (_e, cfg) => { try { return { ok: true, config: writeConfig(cfg) }; } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle("set-settings", (_e, cfg) => { try { const c = writeConfig(cfg); live.setLimits({ stuckUsd: c.stuckUsd }); return { ok: true, config: c }; } catch (e) { return { ok: false, error: e.message }; } });
 ipcMain.handle("pick-folder", async (_e, title) => {
   const r = await dialog.showOpenDialog(win, { title: title || "Choose a folder", properties: ["openDirectory", "createDirectory"] });
   return r.canceled ? null : r.filePaths[0];
@@ -184,6 +185,11 @@ function buildFix(spec) {
     if (area && area.team) throw new Error("pick a project, not a team folder");
     return { type: "command", project: area, text: String(spec.text || ""), name: spec.name };
   }
+  if (spec.type === "rule") {                       // a repeated mistake -> memory note in that project
+    const area = areaByKey(spec.area);
+    if (area.team) throw new Error("pick a project, not a team folder");
+    return { type: "rule", area, name: spec.name, rule: String(spec.rule || ""), description: String(spec.description || ""), why: String(spec.why || ""), tool: String(spec.tool || "") };
+  }
   const note = memByIdx(spec.mem), area = note.area ? areaByKey(note.area) : null;
   if (!area || area.team) throw new Error("this note can't be changed from Synapse");
   if (spec.type === "index") return { type: "index", note, area };
@@ -220,19 +226,26 @@ const lastAlert = new Map();          // session -> time, so one session can't s
 function alertFor(e) {
   if (readConfig().alerts === false || !Notification.isSupported()) return;
   if (win && !win.isDestroyed() && win.isFocused()) return;          // the window shows it in-app instead
-  if (Date.now() - (lastAlert.get(e.session) || 0) < 20000) return;
-  lastAlert.set(e.session, Date.now());
+  const akey = e.session + "|" + e.type;
+  if (Date.now() - (lastAlert.get(akey) || 0) < 20000) return;
+  lastAlert.set(akey, Date.now());
   const a = last && last.areas.find((x) => x.key === e.cwd), project = a ? a.name : "Claude";
-  const n = e.type === "turn-end"
-    ? new Notification({ title: `✓ ${project}: your turn`, body: e.text ? e.text.slice(0, 140) : "Claude finished and is waiting for your reply.", silent: false })
+  const file = (p) => String(p || "").split("/").slice(-2).join("/");
+  const STUCK = { "edit-loop": (d) => `${file(d.p)} edited ${d.times} times in ${d.minutes} min — it may be going in circles.`,
+    "same-error": (d) => `The same ${d.tool || "tool"} error ${d.times} times: ${String(d.sig || "").slice(0, 90)}`,
+    "many-errors": (d) => `${d.times} tool errors in the last few minutes.`,
+    "cost-burn": (d) => `Cost rose $${d.usd.toFixed(2)} in ${d.minutes} min.` };
+  const n = e.type === "turn-end" ? new Notification({ title: `✓ ${project}: your turn`, body: e.text ? e.text.slice(0, 140) : "Claude finished and is waiting for your reply." })
+    : e.type === "conflict" ? new Notification({ title: `⚠ Two sessions are editing ${file(e.p)}`, body: `Another session${e.otherCwd && e.otherCwd !== e.cwd ? " (another project)" : ""} edited it ${Math.max(1, Math.round(e.ago / 60e3))} min ago. Their changes can overwrite each other.` })
+    : e.type === "stuck" ? new Notification({ title: `🌀 ${project}: the session may be stuck`, body: (STUCK[e.reason] || (() => "Something looks off."))(e.detail || {}) })
     : new Notification({ title: `⏳ ${project} may be waiting for you`, body: `${e.tool || "A tool"} has been waiting for ${Math.round((Date.now() - e.since) / 1000)}s — a permission prompt, or a long command.` });
   n.on("click", () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); win.webContents.send("focus-session", e.session); } });
   n.show();
 }
 const live = createLive((events) => {
   if (win && !win.isDestroyed()) win.webContents.send("live", events);
-  for (const e of events) if (e.type === "turn-end" || e.type === "tool-waiting") alertFor(e);
-}, (m) => console.warn(m));
+  for (const e of events) if (/^(turn-end|tool-waiting|conflict|stuck)$/.test(e.type)) alertFor(e);
+}, (m) => console.warn(m), { stuckUsd: readConfig().stuckUsd || 10 });
 let demoTimer = null;
 ipcMain.handle("live", (_e, on) => {
   if (DEMO) { clearInterval(demoTimer); demoTimer = null; if (on) demoTimer = setInterval(() => { if (win && last) win.webContents.send("live", demoLiveTick(last)); }, 420); return { ok: true }; }

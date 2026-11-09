@@ -17,6 +17,10 @@ fs.writeFileSync(path.join(sdir, "aaaa1111.jsonl"), [1, 2, 3, 4].map((i) => [
   { type: "user", cwd: proj, timestamp: ts(i * 1500), message: { content: "run the tests and fix anything that fails" } },
   { type: "assistant", cwd: proj, timestamp: ts(i * 1500 - 1), message: { id: "m" + i, content: [{ type: "tool_use", id: "x" + i, name: "Read", input: { file_path: path.join(proj, "src", "main.ts") } }] } },
 ]).flat().map((o) => JSON.stringify(o)).join("\n") + "\n");
+fs.appendFileSync(path.join(sdir, "aaaa1111.jsonl"), [1, 2, 3].map((i) => [
+  { type: "assistant", cwd: proj, timestamp: ts(50 + i), message: { id: "q" + i, content: [{ type: "tool_use", id: "bq" + i, name: "Bash", input: { command: `node -e "console.log(${i})` } }] } },
+  { type: "user", cwd: proj, timestamp: ts(50 + i), message: { content: [{ type: "tool_result", tool_use_id: "bq" + i, is_error: true, content: "Exit code 2\n/usr/bin/bash: -c: line " + i + ": unexpected EOF while looking for matching `\"'" }] } },
+]).flat().map((o) => JSON.stringify(o)).join("\n") + "\n");
 for (const sid of ["bbbb2222", "cccc3333"]) fs.writeFileSync(path.join(sdir, sid + ".jsonl"), JSON.stringify({ type: "user", cwd: proj, timestamp: ts(5), message: { content: "run the tests and fix anything that fails" } }) + "\n");
 const sha = (f) => crypto.createHash("sha1").update(fs.readFileSync(f)).digest("hex");
 const before = sha(path.join(mem, "MEMORY.md"));
@@ -55,6 +59,26 @@ app.whenReady().then(async () => {
   ok(fs.existsSync(cmd) && /run the tests/.test(fs.readFileSync(cmd, "utf8")), "slash command file created");
   await js(`document.getElementById('tAct').click()`); await wait(600);
   ok(!fs.existsSync(cmd), "Undo removed the new command");
+  // repeated mistake -> memory rule
+  await js(`__synapse.showInsights('suggest')`); await wait(400);
+  ok(/Mistakes Claude keeps repeating · 1/i.test(await js(`document.getElementById('dbody').innerText`)), "Suggestions: repeated mistake listed (3× quoting error)");
+  await js(`document.querySelector('[data-rule]').click()`); await wait(400);
+  const ruleText = await js(`document.getElementById('fxRule').value`);
+  ok(/heredoc|write the script to a file/i.test(ruleText), "rule is pre-filled for this kind of mistake");
+  await js(`document.getElementById('mYes').click()`); await wait(700);
+  ok(/create memory note/.test(await js(`document.getElementById('mBody').innerText`)), "rule preview shows the new note + MEMORY.md line");
+  await js(`document.getElementById('mYes').click()`); await wait(700);
+  const ruleFile = fs.readdirSync(mem).find((f) => f.startsWith("rule-"));
+  ok(ruleFile && /heredoc/.test(fs.readFileSync(path.join(mem, ruleFile), "utf8")) && fs.readFileSync(path.join(mem, "MEMORY.md"), "utf8").includes(ruleFile), "rule saved: " + ruleFile);
+  await js(`document.getElementById('tAct').click()`); await wait(600);
+  ok(!fs.readdirSync(mem).some((f) => f.startsWith("rule-")) && sha(path.join(mem, "MEMORY.md")) === before, "Undo removed the rule and restored MEMORY.md");
+  // conflict + stuck, as live mode would deliver them
+  await js(`(() => { const k = __synapse.areas[0].key; __synapse.onLiveEvents([
+    { type: 'conflict', session: 'aaaa1111', cwd: k, t: Date.now(), p: k + '/src/main.ts', other: 'bbbb2222', otherCwd: k, ago: 120000 },
+    { type: 'stuck', session: 'cccc3333', cwd: k, t: Date.now(), reason: 'cost-burn', detail: { usd: 14.2, minutes: 9 } }]); })()`); await wait(300);
+  const tk = await js(`document.getElementById('ticker').innerText`);
+  ok(/two sessions/.test(tk) && /main\.ts/.test(tk), "conflict shows in the ticker");
+  ok(/may be stuck/.test(tk) && /\$14/.test(tk), "stuck session (cost burn) shows in the ticker");
   // waiting alert, as live mode would deliver it
   await js(`__synapse.onLiveEvents([{ type: 'turn-end', session: 'aaaa1111', cwd: __synapse.areas[0].key, t: Date.now(), text: 'done' }])`); await wait(300);
   ok(/your turn/.test(await js(`document.getElementById('ticker').innerText`)), "turn-end shows 'your turn' in the ticker");

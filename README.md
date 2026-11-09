@@ -15,6 +15,13 @@ and connect what one project learned to another with a drag.
 
 ---
 
+## What Claude can't do on its own
+
+A Claude session only sees **itself**, only runs **while you talk to it**, and has **no history** across sessions.
+Synapse watches from the outside, so it can tell you things no single session can:
+two sessions fighting over one file, a session going in circles, the same mistake made in ten
+different sessions, and which files every session wastes tokens re-reading.
+
 ## Why
 
 Claude Code keeps **memory per project folder**. What it learned in `api-server` (your auth rules,
@@ -37,6 +44,9 @@ drag `api-server` onto `web-dashboard`, and every new Claude session in `web-das
 | 💸 **Cost insights** | API-equivalent cost per project, per day and per session, plus lines added and tokens. |
 | 🩺 **Memory doctor** | Finds notes missing from `MEMORY.md`, broken `[[links]]`, near-duplicates and stale notes, and **fixes them in one click**. You see a diff first, every file is backed up, and you can undo right after. |
 | 💡 **Suggestions** | Learns from how you work: **prompts you keep repeating** become a slash command in one click; **files Claude keeps re-reading** get a ready prompt to turn them into a memory note (saves tokens); **files edited over and over** are flagged as refactor candidates. |
+| 🔁 **Mistakes Claude keeps repeating** | Every session starts fresh, so Claude can't notice it makes the **same mistake again and again** (editing before reading, broken shell quoting, the same failing command…). Synapse sees all sessions, groups identical errors, and turns one into a **memory rule** in one click, so new sessions stop repeating it. |
+| ⚠️ **Conflict guard** | Two sessions editing **the same file** at the same time can overwrite each other's work, and neither session knows the other exists. Synapse does, and warns you right away. |
+| 🌀 **Stuck-session alert** | A session editing the same file over and over, hitting the same error repeatedly, or burning money fast (default: $10 in ~15 min) gets flagged before it wastes more. |
 | 🔔 **"Your turn" alerts** | With live mode on, you get a desktop notification when a session finishes and waits for your reply, or when a tool has been waiting a while (usually a permission prompt). Handy with many sessions at once. |
 | 👥 **Team memory** | Point Synapse at a shared folder of notes (e.g. a git repo) and link it into any project. |
 | 🔌 **MCP server** | Claude itself can search memory across all projects, check activity and link memory. |

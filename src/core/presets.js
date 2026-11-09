@@ -20,6 +20,7 @@ const DEFAULT_CONFIG = {
   skipRoots: [],                // project names to hide
   maxFilesPerProject: 4000,
   alerts: true,                 // desktop notification when a session needs you (live mode)
+  stuckUsd: 10,                 // "stuck" alert when a session spends this much within ~15 minutes
 };
 
 function skipDirsFor(cfg) {

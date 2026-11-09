@@ -53,11 +53,28 @@ const listSessionFiles = (projectDir) => { try { return fs.readdirSync(projectDi
 
 const EDIT_TOOLS = /^(Edit|Write|MultiEdit|NotebookEdit)$/;
 
+// A tool error's "signature": its meaningful first line with paths, quoted text and numbers blanked,
+// so the same mistake made twice gets the same signature.
+const DENIED = /doesn.t want to proceed|tool use was rejected|was denied by|permission for this action was denied|user denied/i;
+function errorSignature(text) {
+  const lines = String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const line = lines.find((l) => !/^exit code \d+$/i.test(l) && !/^<\/?tool_use_error>$/.test(l)) || lines[0] || "";
+  return line.replace(/<\/?tool_use_error>/g, "")
+    .replace(/([A-Za-z]:)?[\\/][^\s'"`]+/g, "<path>")
+    .replace(/(["'`])[^"'`]{0,200}\1/g, '"…"')
+    .replace(/0x[0-9a-f]+|\d+(\.\d+)?/gi, "#")
+    .replace(/\s+/g, " ").trim().slice(0, 140);
+}
+const isDenied = (text) => DENIED.test(String(text || ""));
+const resultText = (c) => typeof c.content === "string" ? c.content : Array.isArray(c.content) ? c.content.map((x) => x.text || "").join(" ") : "";
+// what a tool call was about, in a few words (command, file, url, pattern)
+const toolInput = (input) => input ? String(input.command || input.file_path || input.url || input.pattern || input.path || "").slice(0, 160) : "";
+
 // Parse one session log. Returns null if it has no usable content.
 function readSession(file) {
   let cwd = null, start = null, end = null, prompts = 0, firstPrompt = "", title = "", model = "", cost = null;
   const promptList = [];
-  const touched = new Map(), events = [], seenMsg = new Set();
+  const touched = new Map(), events = [], seenMsg = new Set(), toolById = new Map(), errors = [];
   const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let text; try { text = fs.readFileSync(file, "utf8"); } catch { return null; }
   for (const line of text.split("\n")) {
@@ -80,6 +97,11 @@ function readSession(file) {
     }
     const content = msg && Array.isArray(msg.content) ? msg.content : [];
     for (const c of content) {
+      if (c.type === "tool_use" && c.id) toolById.set(c.id, { name: c.name, input: toolInput(c.input) });
+      if (c.type === "tool_result" && c.is_error && errors.length < 400) {
+        const tool = toolById.get(c.tool_use_id) || { name: "?", input: "" }, txt = resultText(c);
+        errors.push({ t, tool: tool.name, input: tool.input, sig: errorSignature(txt), text: txt.replace(/\s+/g, " ").slice(0, 240), denied: isDenied(txt) });
+      }
       if (c.type !== "tool_use" || !c.input) continue;
       const p = c.input.file_path || c.input.notebook_path;
       if (!p) continue;
@@ -90,7 +112,7 @@ function readSession(file) {
   }
   if (!cwd || !start) return null;
   return { id: path.basename(file, ".jsonl").slice(0, 8), file, cwd, start, end, prompts, promptList, title: title || firstPrompt, model, tokens, cost,
-    touched: [...touched].map(([p, k]) => ({ p: norm(p), k })), events };
+    touched: [...touched].map(([p, k]) => ({ p: norm(p), k })), events, errors };
 }
 
 // Memory note: optional frontmatter (name, description, type) + body with [[wiki links]]
@@ -111,4 +133,4 @@ function parseNote(file) {
 const projectInstructionFiles = (projectPath) => ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"].map((rel) => ({ rel, path: path.join(projectPath, rel) }));
 const globalInstructionFile = () => path.join(CLAUDE_HOME, "CLAUDE.md");
 
-module.exports = { CLAUDE_HOME, PROJECTS, encode, norm, memDirFor, isTempPath, decodeProjectDir, listProjectDirs, listSessionFiles, readSession, parseNote, projectInstructionFiles, globalInstructionFile };
+module.exports = { errorSignature, isDenied, resultText, toolInput, CLAUDE_HOME, PROJECTS, encode, norm, memDirFor, isTempPath, decodeProjectDir, listProjectDirs, listSessionFiles, readSession, parseNote, projectInstructionFiles, globalInstructionFile };

@@ -28,6 +28,9 @@ fs.writeFileSync(path.join(bdir, "1234abcd-0000.jsonl"), [
   { type: "user", cwd: beta, timestamp: t(30), message: { content: "add a health endpoint" } },
   { type: "assistant", cwd: beta, timestamp: t(29), message: { id: "m1", model: "claude-x", usage: { input_tokens: 10, output_tokens: 200 }, content: [{ type: "tool_use", name: "Edit", input: { file_path: path.join(beta, "src", "server.ts") } }] } },
   { type: "assistant", cwd: beta, timestamp: t(28), message: { id: "m2", usage: { output_tokens: 50 }, content: [{ type: "tool_use", name: "Read", input: { file_path: path.join(amem, "physics.md") } }] } },
+  // the same mistake 3 times (different line numbers / paths -> same signature)
+  ...[1, 2, 3].map((i) => ({ type: "assistant", cwd: beta, timestamp: t(20 - i), message: { id: "e" + i, content: [{ type: "tool_use", id: "te" + i, name: "Edit", input: { file_path: path.join(beta, "src", "f" + i + ".ts") } }] } })),
+  ...[1, 2, 3].map((i) => ({ type: "user", cwd: beta, timestamp: t(20 - i), message: { content: [{ type: "tool_result", tool_use_id: "te" + i, is_error: true, content: "<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>" }] } })),
   { type: "custom-title", customTitle: "Health endpoint" },
   { type: "cost-state", totalCostUSD: 1.25, totalLinesAdded: 40, totalLinesRemoved: 3 },
 ].map((o) => JSON.stringify(o)).join("\n") + "\n");
@@ -48,6 +51,9 @@ try {
   const phys = d.memories.find((m) => m.name === "physics");
   ok(phys.type === "feedback" && phys.health.inIndex && phys.health.issues.some((i) => i.type === "broken-link"), "note frontmatter, index check and broken [[link]] detected");
   ok(s.events.length === 2, "replay events recorded");
+  const mk = d.suggestions.mistakes;
+  ok(mk.length === 1 && mk[0].count === 3 && mk[0].tool === "Edit" && /has not been read yet/.test(mk[0].sig), "repeated mistake found (Edit before Read, 3x)");
+  ok(s.errorCount === 3 && !("errors" in s), "raw errors are summarized, not kept in the data");
 
   console.log("memory linking");
   const bIndex = path.join(M.memDirFor(beta), "MEMORY.md");
@@ -95,8 +101,14 @@ try {
   ok(threw, "never overwrites an existing command");
   threw = false; try { Doctor.apply({ changes: [{ file: path.join(beta, "src", "server.ts"), before: "export {}", after: "hacked" }] }, path.join(OUT, "bak")); } catch { threw = true; }
   ok(threw && fs.readFileSync(path.join(beta, "src", "server.ts"), "utf8") === "export {}", "refuses to write project source files");
+  // 5) save a repeated mistake as a memory rule (new note + MEMORY.md line)
+  const u5 = Doctor.apply(Doctor.plan({ type: "rule", area: A2, name: "Rule: read before edit!", rule: "Always Read a file right before you Edit it.", why: "hit 3 times", tool: "Edit" }), path.join(OUT, "bak"));
+  const ruleNote = path.join(amem, "rule-read-before-edit.md");
+  ok(fs.existsSync(ruleNote) && /type: feedback/.test(fs.readFileSync(ruleNote, "utf8")) && fs.readFileSync(path.join(amem, "MEMORY.md"), "utf8").includes("(rule-read-before-edit.md)"), "apply: rule saved as a feedback note and indexed");
+  d = scan(null);
+  ok(d.memories.some((m) => m.name === "rule-read-before-edit" && m.type === "feedback"), "scanner reads the new rule like any memory note");
   // undo everything, newest first -> byte-identical
-  for (const u of [u4, u3, u2, u1]) Doctor.undo(u.undo, [beta]);
+  for (const u of [u5, u4, u3, u2, u1]) Doctor.undo(u.undo, [beta]);
   ok(JSON.stringify(snap()) === JSON.stringify(before0) && !fs.existsSync(path.join(beta, ".claude", "commands", "fix-tests.md")), "undo restores every file byte-for-byte");
   fs.unlinkSync(path.join(amem, "jumping.md")); fs.unlinkSync(path.join(amem, "physics-tuning.md"));
 

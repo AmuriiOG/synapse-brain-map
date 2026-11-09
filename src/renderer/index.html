@@ -109,7 +109,8 @@
   #modal .fld input { width:100%; margin-top:4px; } #modal .fld { display:block; margin-top:10px; color:var(--dim); }
   button.fix { margin-top:5px; padding:2px 9px; font-size:11px; border-color:#3b2f5c; color:#d9c9ff; }
   #drawer .sug { padding:7px 0; border-top:1px solid #161a24; } #drawer .sug[data-node] { cursor:pointer; } #drawer .sug i { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; }
-  #drawer .sug span { color:var(--dim); } #drawer .sug > div { font-size:11px; margin-top:2px; color:#c7cfdd; } #drawer .sug b { color:#e8ecf3; }
+  #drawer .sug span { color:var(--dim); } #drawer .sug > div { font-size:11px; margin-top:2px; color:#c7cfdd; overflow-wrap:anywhere; } #drawer .sug b { color:#e8ecf3; }
+  #drawer code { color:#ffb3c0; font-size:10.5px; } #modal textarea { font:inherit; color:var(--fg); background:#11141c; border:1px solid var(--line); border-radius:5px; padding:6px; resize:vertical; }
   #legend { position:fixed; left:16px; bottom:14px; color:var(--dim); z-index:2; font-size:11px; }
 </style>
 </head>
@@ -1103,6 +1104,8 @@ function onLiveEvents(evs) {
       tick(`💬 ${esc(e.text)} <span>${esc(hub ? hub.label : '')}</span>`, color);
     } else if (e.type === 'turn-end' || e.type === 'tool-waiting') {
       onWaitingEvent(e);
+    } else if (e.type === 'conflict' || e.type === 'stuck') {
+      onGuardEvent(e);
     } else if (e.type === 'tool' && /^(Bash|PowerShell|WebSearch|WebFetch|Agent|Task)$/.test(e.tool)) {
       flash(src, 900); tick(`⚙ ${esc(e.tool)} <span>${esc(hub ? hub.label : '')}</span>`, '#8b93a5');
     }
@@ -1165,7 +1168,7 @@ function showInsights(tab = 'cost') {
       <div class="hint">"Cost" is what these sessions would cost at API prices, as recorded by Claude Code. On a subscription plan you don't pay this per session.</div>
       <h4>by project</h4>${bars(perArea, money, '#4f8cff')}<h4>by day</h4>${bars(days, money, '#b277ff')}<h4>most expensive sessions</h4>${bars(top, money, '#ff8a3d')}`;
   } else if (tab === 'suggest') {
-    h += suggestionsHtml();
+    h += mistakesHtml() + suggestionsHtml();
   } else {
     const issues = []; memNodes.forEach(n => (n.d.health ? n.d.health.issues : []).forEach(i => issues.push({ n, i })));
     const order = ['not-indexed', 'broken-link', 'duplicate', 'no-description', 'stale'];
@@ -1180,7 +1183,7 @@ function showInsights(tab = 'cost') {
   }
   openDrawer(h);
   dbody.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => showInsights(b.dataset.tab));
-  bindFixButtons(dbody); if (tab === 'suggest') bindSuggestions();
+  bindFixButtons(dbody); if (tab === 'suggest') { bindSuggestions(); bindMistakes(); }
   dbody.querySelectorAll('[data-node]').forEach(el => el.onclick = () => { const n = nodes[el.dataset.node]; const mv = tab === 'health' && view !== 'memory'; if (mv) setView('memory'); setTimeout(() => { openPanel(n); cam.tx = n.tx; cam.ty = n.ty; cam.ts = Math.max(cam.ts, (cam.fitS || .4) * 1.8); }, mv ? 950 : 0); });
 }
 $id('bInsights').onclick = () => drawer.classList.contains('open') && dbody.querySelector('.tabs') ? closeDrawer() : showInsights();
@@ -1191,7 +1194,8 @@ async function showSettings() {
   const list = (arr, kind) => arr.map((x, i) => `<div class="lk"><span>${esc(kind === 'team' ? x.name + ' — ' + x.path : x)}</span><button data-rm="${kind}:${i}">✕</button></div>`).join('') || '<div class="hint">— none</div>';
   openDrawer(`<h3>⚙ Settings</h3>
     <h4>History</h4><label class="fld">show the last <input id="sDays" type="number" min="1" max="365" value="${c.days}"> days</label>
-    <h4>Alerts</h4><label class="cb"><input type="checkbox" id="sAlerts" ${c.alerts !== false ? 'checked' : ''}> desktop notification when a session finishes or may be waiting for you (needs ● live)</label>
+    <h4>Alerts</h4><label class="cb"><input type="checkbox" id="sAlerts" ${c.alerts !== false ? 'checked' : ''}> desktop notification when a session finishes, may be waiting, two sessions edit the same file, or a session looks stuck (needs ● live)</label>
+    <label class="fld">"stuck" alert when one session spends more than $<input id="sStuck" type="number" min="1" max="1000" value="${c.stuckUsd || 10}"> in ~15 minutes</label>
     <h4>Folders to skip while scanning projects</h4>
     <div class="presets">${Object.entries(S.presets).map(([k, p]) => `<label class="cb" title="${esc(p.dirs.join(', '))}"><input type="checkbox" data-preset="${k}" ${c.presets.includes(k) ? 'checked' : ''}> ${esc(p.label)}</label>`).join('')}</div>
     <label class="fld">also skip (comma separated) <input id="sSkip" value="${esc((c.skipDirs || []).join(', '))}" placeholder="RawCaptures, Exports"></label>
@@ -1226,6 +1230,7 @@ async function showSettings() {
   $id('sSave').onclick = async () => {
     cfg.days = Number($id('sDays').value) || 60;
     cfg.alerts = $id('sAlerts').checked;
+    cfg.stuckUsd = Number($id('sStuck').value) || 10;
     cfg.presets = [...dbody.querySelectorAll('[data-preset]')].filter(x => x.checked).map(x => x.dataset.preset);
     cfg.skipDirs = $id('sSkip').value.split(',').map(x => x.trim()).filter(Boolean);
     cfg.skipRoots = [...dbody.querySelectorAll('[data-root]')].filter(x => !x.checked).map(x => x.dataset.root);
@@ -1406,6 +1411,74 @@ function focusSession(id) {
   openPanel(n); cam.tx = n.x; cam.ty = n.y; cam.ts = Math.max(cam.ts, (cam.fitS || .4) * 1.5);
 }
 window.synapse.onFocusSession(focusSession);
+// ================================================================ THINGS ONE CLAUDE SESSION CAN'T SEE
+// ---- repeated mistakes -> a memory rule, so new sessions stop making them
+const RULES = [
+  [/has not been read yet|read it first/i, "Always Read a file right before you Edit or Write it in this project."],
+  [/unexpected EOF while looking for matching|unterminated quoted string|syntax error near unexpected token/i, "For multi-line or heavily quoted shell commands, write the script to a file (a heredoc with a quoted delimiter) and run that, instead of quoting it inline."],
+  [/string to replace not found|old_string/i, "Re-read the file right before an Edit; never edit from memory of an older version of the file."],
+  [/timed out.*(browser pane|hidden)|browser pane is (currently )?hidden/i, "Before using the browser tools, check the Browser pane is visible (ask me to show it) instead of retrying."],
+  [/cannot find module|module not found|no such file or directory|ENOENT/i, "Check that a file or module exists (list the folder) before running or importing it."],
+  [/permission denied|EACCES|access is denied/i, "Don't retry commands that fail with permission errors — tell me what needs access instead."],
+  [/timed out|timeout/i, "When this tool times out, stop and tell me instead of retrying the same call."],
+];
+function ruleFor(m) {
+  if (m.denied) return `Don't use ${m.tool}${m.input ? ` (${m.input.split(/\s+/).slice(0, 4).join(" ")})` : ""} in this project without asking me first — I rejected it ${m.count} times.`;
+  const hit = RULES.find(([re]) => re.test(m.sig + " " + m.text));
+  return hit ? hit[1] : `When ${m.tool} fails with "${m.sig.slice(0, 80)}", stop and find the cause before retrying the same call.`;
+}
+const shortTool = t => String(t || '').replace(/^mcp__/, '').replace(/__/g, ' › ');
+function mistakesHtml() {
+  const list = SUG.mistakes || [];
+  let h = `<h4>🔁 Mistakes Claude keeps repeating · ${list.length}</h4><div class="hint">Each session starts fresh, so Claude can't notice it makes the same mistake again and again. Synapse can. Save a rule and new sessions in that project will follow it.</div>`;
+  if (!list.length) return h + '<div class="hint">none — no tool error repeated 3+ times</div>';
+  return h + list.map((m, i) => { const a = areas[areaIdx.get(m.area)];
+    return `<div class="sug"><i style="background:${a ? a.color : '#888'}"></i><b>${m.denied ? '🚫 you rejected ' : ''}${esc(shortTool(m.tool))}</b> <span>${esc(a ? a.name : '')}</span>
+      <div>${m.count}× on ${m.days} day${m.days > 1 ? 's' : ''} · <code>${esc(m.sig.slice(0, 110))}</code></div>
+      ${m.input ? `<div class="hint">e.g. ${esc(m.input.slice(0, 110))}</div>` : ''}
+      <button class="fix" data-rule="${i}">🧠 save as a memory rule</button></div>`; }).join('');
+}
+async function saveRule(m) {
+  const a = areas[areaIdx.get(m.area)]; if (!a) return;
+  const STOP = new Set(['path', 'line', 'exit', 'code', 'error', 'with', 'this', 'that', 'from', 'tool', 'while', 'looking', 'before', 'after']);
+  const words = (m.denied ? 'ask before ' + shortTool(m.tool) : m.sig).toLowerCase().replace(/<path>|"…"|#/g, ' ').split(/[^a-z0-9]+/).filter(w => w.length >= 4 && !STOP.has(w));
+  const slug = 'rule-' + (words.slice(0, 4).join('-') || 'repeated-mistake');
+  const why = `Claude hit this ${m.count} times on ${m.days} day(s) with ${m.tool}: "${m.sig}".${m.input ? ' Latest: ' + m.input.slice(0, 120) : ''}`;
+  const ok = await confirmBox('Save as a memory rule', `New Claude sessions in <b style="color:${a.color}">${esc(a.name)}</b> will read this rule.<br>
+    <label class="fld">rule (edit it if you like)<textarea id="fxRule" rows="3" style="width:100%;margin-top:4px">${esc(ruleFor(m))}</textarea></label>
+    <label class="fld">note name <input id="fxName" value="${esc(slug)}"></label>
+    <div class="hint" style="margin-top:8px">Why: ${esc(why)}</div>`, 'Preview');
+  if (!ok) return;
+  const rule = $id('fxRule').value.trim(), name = $id('fxName').value.trim();
+  return previewAndApply({ type: 'rule', area: a.key, name, rule, description: rule.slice(0, 140), why, tool: m.tool }, 'Save memory rule', () => toast('✓ saved — new sessions in ' + a.name + ' will follow it'));
+}
+function bindMistakes() { dbody.querySelectorAll('[data-rule]').forEach(b => b.onclick = ev => { ev.stopPropagation(); saveRule(SUG.mistakes[Number(b.dataset.rule)]); }); }
+
+// ---- live: two sessions on one file, or a session going in circles
+const STUCK_TXT = {
+  'edit-loop': d => `edited ${shortPath(d.p)} ${d.times}× in ${d.minutes} min`,
+  'same-error': d => `same ${shortTool(d.tool)} error ${d.times}×`,
+  'many-errors': d => `${d.times} errors in a few minutes`,
+  'cost-burn': d => `spent ${money(d.usd)} in ${d.minutes} min`,
+};
+function onGuardEvent(e) {
+  const hub = hubByKey.get(e.cwd), name = hub ? hub.label : 'a session';
+  if (e.type === 'conflict') {
+    const f = fileByP.get(e.p), a = sessById.get(e.session), b = sessById.get(e.other);
+    const tgt = f && f.alpha > .2 ? f : hub;
+    [a, b].forEach(s => { const src = s && s.alpha > .2 ? s : hubByKey.get(e.cwd); if (src && tgt) beam(src, tgt, '#ff5d7a', 2600); });
+    if (tgt) flash(tgt, 5000);
+    tick(`⚠ <b>two sessions</b> editing <b>${esc(shortPath(e.p))}</b> <span>${esc(name)}</span>`, '#ff5d7a');
+    if (document.hasFocus()) toastAction(`⚠ Two sessions are editing ${shortPath(e.p)} — their changes can overwrite each other`, 'show', () => focusSession(e.session));
+  } else if (e.type === 'stuck') {
+    const txt = (STUCK_TXT[e.reason] || (() => 'looks stuck'))(e.detail || {});
+    if (hub) { flash(hub, 5000); beam(center, hub, '#ff8a3d', 2000); }
+    waiting.set(e.session, e);
+    tick(`🌀 <b>${esc(name)}</b> may be stuck <span>${esc(txt)}</span>`, '#ff8a3d');
+    if (document.hasFocus()) toastAction(`🌀 ${name} may be stuck: ${txt}`, 'show', () => focusSession(e.session));
+  }
+}
+
 
 // ---------------------------------------------------------------- go: burst out from the center
 window.__synapse = { openPanel: n => openPanel(n), hubs, memNodes, areas, sessNodes, onLiveEvents: e => onLiveEvents(e), showInsights: t => showInsights(t), showSettings: () => showSettings(), startReplay: n => startReplay(n), get beams() { return beams.length; } };
