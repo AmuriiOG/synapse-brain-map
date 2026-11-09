@@ -1,0 +1,103 @@
+{
+  "name": "synapse-brain-map",
+  "productName": "Synapse",
+  "version": "0.1.0",
+  "description": "A living map of your Claude Code projects: sessions, files, commits and memory — and link memory between projects.",
+  "main": "src/main.js",
+  "author": {
+    "name": "AmuriiOG",
+    "email": "207719046+AmuriiOG@users.noreply.github.com",
+    "url": "https://github.com/AmuriiOG"
+  },
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "claude",
+    "memory",
+    "visualization",
+    "electron",
+    "developer-tools",
+    "ai"
+  ],
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/fixture.test.js && node test/livetest.js",
+    "test:e2e": "electron test/e2e.js",
+    "bench": "electron test/bench.js",
+    "icon": "node scripts/make-icon.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux",
+    "test:memory": "node test/memtest.js",
+    "test:team": "node test/teamtest.js",
+    "test:ui": "electron test/features.js",
+    "mcp": "node src/mcp.js",
+    "demo": "electron . --demo",
+    "record-demo": "electron scripts/record-demo.js"
+  },
+  "build": {
+    "appId": "dev.synapse.brainmap",
+    "productName": "Synapse",
+    "files": [
+      "src/**/*",
+      "build/icon.*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.png",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icon.png",
+      "category": "Development",
+      "maintainer": "AmuriiOG <207719046+AmuriiOG@users.noreply.github.com>",
+      "synopsis": "A living map of your Claude Code projects and memory"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "asarUnpack": [
+      "src/core/**",
+      "src/mcp.js"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
+    "gifenc": "^1.0.3"
+  },
+  "bin": {
+    "synapse-mcp": "src/mcp.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AmuriiOG/synapse-brain-map.git"
+  },
+  "homepage": "https://github.com/AmuriiOG/synapse-brain-map"
+}

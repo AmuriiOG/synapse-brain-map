@@ -1,0 +1,24 @@
+// The only bridge between the page and the main process. The page gets these functions, nothing else.
+const { contextBridge, ipcRenderer } = require("electron");
+const on = (ch) => (fn) => { const h = (_e, v) => fn(v); ipcRenderer.on(ch, h); return () => ipcRenderer.removeListener(ch, h); };
+contextBridge.exposeInMainWorld("synapse", {
+  scan: () => ipcRenderer.invoke("scan"),
+  rescan: () => ipcRenderer.invoke("rescan"),
+  onScanProgress: on("scan-progress"),
+  onScanUpdated: on("scan-updated"),
+  getSettings: () => ipcRenderer.invoke("get-settings"),
+  setSettings: (cfg) => ipcRenderer.invoke("set-settings", cfg),
+  pickFolder: (title) => ipcRenderer.invoke("pick-folder", title),
+  initTeamFolder: (dir) => ipcRenderer.invoke("init-team-folder", dir),
+  openPath: (p) => ipcRenderer.invoke("open-path", p),
+  openBackups: () => ipcRenderer.invoke("open-backups"),
+  openUrl: (u) => ipcRenderer.invoke("open-url", u),
+  saveFile: (name, data, filters) => ipcRenderer.invoke("save-file", { name, data, filters }),
+  memOpen: (mem) => ipcRenderer.invoke("mem-open", { mem }),
+  memOpenIndex: (area) => ipcRenderer.invoke("mem-open-index", { area }),
+  memLink: (from, to, both) => ipcRenderer.invoke("mem-link", { from, to, both }),
+  memShare: (mem, to) => ipcRenderer.invoke("mem-share", { mem, to }),
+  memUnlink: (to, share) => ipcRenderer.invoke("mem-unlink", { to, share }),
+  live: (on) => ipcRenderer.invoke("live", on),
+  onLive: on("live"),
+});

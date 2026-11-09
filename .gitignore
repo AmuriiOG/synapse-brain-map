@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-old/
+*.log
+.DS_Store
+# local test artefacts
+test/out/
