@@ -6,8 +6,11 @@ const { execFileSync } = require("node:child_process");
 const C = require("./claude");
 const M = require("./memory");
 const { DEFAULT_CONFIG, SKIP_EXT, skipDirsFor } = require("./presets");
+const { suggestions } = require("./insights");
 
 const DAY = 864e5;
+// bump when the shape of scan() output changes, so caches from older versions are ignored
+const SCHEMA = 2;
 const words = (s) => new Set(String(s || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2));
 const jaccard = (a, b) => { if (!a.size || !b.size) return 0; let n = 0; for (const x of a) if (b.has(x)) n++; return n / (a.size + b.size - n); };
 
@@ -155,10 +158,14 @@ function scan(configPath = null, onProgress = () => {}) {
     m.health = h;
   });
 
-  return { generated: Date.now(), days: DAYS, config: cfg, areas, sessions, commits, files, links, memories, shares };
+  const data = { schema: SCHEMA, generated: Date.now(), days: DAYS, config: cfg, areas, sessions, commits, files, links, memories, shares };
+  onProgress("looking for suggestions");
+  data.suggestions = suggestions(data);
+  sessions.forEach((s) => delete s.promptList);          // prompts are only needed for the suggestions
+  return data;
 }
 
-module.exports = { scan, loadConfig };
+module.exports = { scan, loadConfig, SCHEMA };
 
 if (require.main === module) {
   const t0 = Date.now(), d = scan(process.argv[2] || null);
@@ -166,4 +173,6 @@ if (require.main === module) {
   const cost = d.sessions.reduce((x, s) => x + (s.cost ? s.cost.usd : 0), 0);
   console.log(`cost $${cost.toFixed(2)} · replay events ${d.sessions.reduce((x, s) => x + s.events.length, 0)} · memory issues ${d.memories.reduce((x, m) => x + m.health.issues.length, 0)}`);
   const kinds = {}; d.memories.forEach((m) => m.health.issues.forEach((i) => kinds[i.type] = (kinds[i.type] || 0) + 1)); console.log(kinds);
+  const S = d.suggestions; console.log(`suggestions: ${S.prompts.length} repeated prompts · ${S.rereads.length} re-read files · ${S.churn.length} churn files`);
+  if (process.argv.includes('-v')) { S.prompts.slice(0, 5).forEach((p) => console.log('  prompt x' + p.sessions + ': ' + p.text.slice(0, 70).replace(/\s+/g, ' '))); S.rereads.slice(0, 4).forEach((r) => console.log('  re-read ' + r.times + 'x/' + r.days + 'd: ' + r.rel)); S.churn.slice(0, 4).forEach((c) => console.log('  churn ' + c.times + 'x/' + c.days + 'd: ' + c.rel)); }
 }

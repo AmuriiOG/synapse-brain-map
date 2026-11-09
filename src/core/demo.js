@@ -2,6 +2,7 @@
 // Used for screenshots/GIFs and for trying Synapse without Claude Code (`npm run demo`).
 // Deterministic: the same seed always gives the same map.
 const DAY = 864e5, HOUR = 36e5;
+const { suggestions } = require("./insights");
 
 function demoData(now = Date.now()) {
   let seed = 42; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -70,7 +71,14 @@ function demoData(now = Date.now()) {
       const am = memories.filter((m) => m.area === a.key);
       if (am.length && rnd() < .8) { const m = am[Math.floor(rnd() * am.length)], mi = memories.indexOf(m), kind = rnd() < .3 ? "edit" : "read"; links.push({ s: si, m: mi, k: kind }); events.splice(1, 0, { t: start + dur * .1, m: mi, k: kind }); }
       const usd = Math.round((1 + rnd() * 18 * heat) * 100) / 100;
-      sessions.push({ id: (1e7 + Math.floor(rnd() * 9e7)).toString(16).slice(0, 8), cwd: a.key, start, end: start + dur, prompts: Math.round(3 + rnd() * 40), title: pick(titles),
+      const HABITS = ["run the tests and fix anything that fails", "update the changelog for this change", "review this diff for bugs before I commit"];
+      const promptList = [{ t: start, text: pick(titles) }];
+      HABITS.forEach((hb, hi) => { if (rnd() < [.55, .3, .4][hi]) promptList.push({ t: start + dur * .8, text: hb }); });
+      // a couple of "hot" files get edited again and again (shows up in Suggestions)
+      const hot = af.filter((f) => /Player|routes|components/.test(f.rel)).slice(0, 2);
+      hot.forEach((f) => { for (let r = 0; r < 4; r++) events.push({ t: start + dur * (r + 1) / 6, f: files.indexOf(f), k: r % 2 ? "read" : "edit" }); });
+      events.sort((x, y) => x.t - y.t);
+      sessions.push({ id: (1e7 + Math.floor(rnd() * 9e7)).toString(16).slice(0, 8), cwd: a.key, start, end: start + dur, prompts: Math.round(3 + rnd() * 40), title: pick(titles), promptList,
         model: "claude-opus-5-5", tokens: { input: 9000, output: Math.round(usd * 9000), cacheRead: Math.round(usd * 900000), cacheWrite: Math.round(usd * 40000) },
         cost: { usd, linesAdded: Math.round(usd * 60), linesRemoved: Math.round(usd * 14), apiMs: dur / 3, unknownModel: false }, events });
     }
@@ -100,7 +108,10 @@ function demoData(now = Date.now()) {
     m.health = { reads: used.filter((l) => l.k === "read").length, edits: used.filter((l) => l.k === "edit").length, lastUsed, issues, similar: [] };
   });
 
-  return { generated: now, days: 60, demo: true, config: {}, areas, sessions, commits, files, links, memories, shares };
+  const data = { generated: now, days: 60, demo: true, config: {}, areas, sessions, commits, files, links, memories, shares };
+  data.suggestions = suggestions(data);
+  sessions.forEach((x) => delete x.promptList);
+  return data;
 }
 
 // a fake stream of live events for the demo: prompts, reads and edits in random projects
@@ -109,6 +120,8 @@ function demoLiveTick(data, rnd = Math.random) {
   const fs = data.files.filter((f) => f.area === s.cwd);
   if (!fs.length) return [];
   const evs = [];
+  if (rnd() < .05) return [{ type: "turn-end", session: s.id, cwd: s.cwd, t: Date.now(), text: "Done — the tests pass and the changelog is updated." }];
+  if (rnd() < .025) return [{ type: "tool-waiting", session: s.id, cwd: s.cwd, t: Date.now(), tool: "Bash", since: Date.now() - 31000 }];
   if (rnd() < .18) evs.push({ type: "prompt", session: s.id, cwd: s.cwd, t: Date.now(), text: ["make the boss attack faster", "add tests for the webhook retry", "why is the chart flickering?", "add a dark mode toggle", "speed up the import job"][Math.floor(rnd() * 5)] });
   const f = fs[Math.floor(rnd() * fs.length)];
   evs.push({ type: "touch", session: s.id, cwd: s.cwd, t: Date.now(), p: f.p, k: rnd() < .5 ? "edit" : "read", tool: "Edit" });

@@ -56,6 +56,7 @@ const EDIT_TOOLS = /^(Edit|Write|MultiEdit|NotebookEdit)$/;
 // Parse one session log. Returns null if it has no usable content.
 function readSession(file) {
   let cwd = null, start = null, end = null, prompts = 0, firstPrompt = "", title = "", model = "", cost = null;
+  const promptList = [];
   const touched = new Map(), events = [], seenMsg = new Set();
   const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let text; try { text = fs.readFileSync(file, "utf8"); } catch { return null; }
@@ -69,6 +70,7 @@ function readSession(file) {
     if (j.type === "cost-state") cost = { usd: j.totalCostUSD || 0, linesAdded: j.totalLinesAdded || 0, linesRemoved: j.totalLinesRemoved || 0, apiMs: j.totalAPIDuration || 0, unknownModel: !!j.hasUnknownModelCost };
     if (j.type === "user" && j.message && typeof j.message.content === "string" && !j.isMeta) {
       prompts++; if (!firstPrompt) firstPrompt = j.message.content.slice(0, 140);
+      if (promptList.length < 300) promptList.push({ t, text: j.message.content.slice(0, 400) });
     }
     const msg = j.message;
     if (j.type === "assistant" && msg && msg.usage && msg.id && !seenMsg.has(msg.id)) {   // one API reply can span several lines
@@ -87,7 +89,7 @@ function readSession(file) {
     }
   }
   if (!cwd || !start) return null;
-  return { id: path.basename(file, ".jsonl").slice(0, 8), file, cwd, start, end, prompts, title: title || firstPrompt, model, tokens, cost,
+  return { id: path.basename(file, ".jsonl").slice(0, 8), file, cwd, start, end, prompts, promptList, title: title || firstPrompt, model, tokens, cost,
     touched: [...touched].map(([p, k]) => ({ p: norm(p), k })), events };
 }
 

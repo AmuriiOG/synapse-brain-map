@@ -20,5 +20,10 @@ contextBridge.exposeInMainWorld("synapse", {
   memShare: (mem, to) => ipcRenderer.invoke("mem-share", { mem, to }),
   memUnlink: (to, share) => ipcRenderer.invoke("mem-unlink", { to, share }),
   live: (on) => ipcRenderer.invoke("live", on),
+  onFocusSession: on("focus-session"),
+  doctorTargets: (mem, broken) => ipcRenderer.invoke("doctor-targets", { mem, broken }),
+  doctorPlan: (spec) => ipcRenderer.invoke("doctor-plan", spec),
+  doctorApply: (id) => ipcRenderer.invoke("doctor-apply", { id }),
+  doctorUndo: (undo) => ipcRenderer.invoke("doctor-undo", { undo }),
   onLive: on("live"),
 });

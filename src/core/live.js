@@ -1,14 +1,22 @@
 // Live mode: watch Claude Code's session logs and emit an event for every new line that matters
 // (a file read/edited by a tool, a new prompt). Only the newly appended bytes are read.
+//
+// It also notices when a session needs YOU:
+//   "turn-end"      Claude finished its turn (assistant stop_reason "end_turn")  -> reliable
+//   "tool-waiting"  a tool call has had no result for WAIT_MS. Usually a permission prompt,
+//                   sometimes just a long-running command -> worded as "may be waiting"
 const fs = require("node:fs");
 const path = require("node:path");
 const C = require("./claude");
 
 const EDIT_TOOLS = /^(Edit|Write|MultiEdit|NotebookEdit)$/;
+const WAIT_MS = Number(process.env.SYNAPSE_WAIT_MS || 25000);
 
 function createLive(onEvents, log = () => {}) {
   const offsets = new Map(), tails = new Map(), timers = new Map();
-  let watcher = null;
+  const pending = new Map();          // session -> Map(tool_use_id -> { t, tool, cwd, alerted })
+  let watcher = null, checker = null;
+  const pendingFor = (sid) => { let m = pending.get(sid); if (!m) pending.set(sid, m = new Map()); return m; };
 
   // start from the current end of every log, so only NEW activity is reported
   const prime = () => {
@@ -28,9 +36,15 @@ function createLive(onEvents, log = () => {}) {
     for (const line of lines) {
       let j; try { j = JSON.parse(line); } catch { continue; }
       const t = j.timestamp ? Date.parse(j.timestamp) : Date.now(), cwd = j.cwd ? C.norm(j.cwd) : null;
-      if (j.type === "user" && j.message && typeof j.message.content === "string" && !j.isMeta) events.push({ type: "prompt", session, cwd, t, text: j.message.content.slice(0, 140) });
+      if (j.type === "user" && j.message && typeof j.message.content === "string" && !j.isMeta) { events.push({ type: "prompt", session, cwd, t, text: j.message.content.slice(0, 140) }); pendingFor(session).clear(); }
       const content = j.message && Array.isArray(j.message.content) ? j.message.content : [];
+      if (j.type === "assistant" && j.message && j.message.stop_reason === "end_turn") {
+        const text = content.filter((c) => c.type === "text").map((c) => c.text).join(" ").replace(/\s+/g, " ").trim();
+        events.push({ type: "turn-end", session, cwd, t, text: text.slice(0, 160) }); pendingFor(session).clear();
+      }
       for (const c of content) {
+        if (c.type === "tool_result" && c.tool_use_id) pendingFor(session).delete(c.tool_use_id);
+        if (c.type === "tool_use" && c.id) pendingFor(session).set(c.id, { t: Date.now(), tool: c.name, cwd, alerted: false });
         if (c.type === "tool_use" && c.input) {
           const p = c.input.file_path || c.input.notebook_path;
           if (p) events.push({ type: "touch", session, cwd, t, p: C.norm(p), k: EDIT_TOOLS.test(c.name) ? "edit" : "read", tool: c.name });
@@ -53,10 +67,19 @@ function createLive(onEvents, log = () => {}) {
       try {
         watcher = fs.watch(C.PROJECTS, { recursive: true }, (_ev, rel) => { if (rel && String(rel).endsWith(".jsonl")) schedule(path.join(C.PROJECTS, String(rel))); });
         watcher.on("error", (e) => log("live watcher error: " + e.message));
+        // tool calls without a result for a while -> the session may be waiting for a permission
+        checker = setInterval(() => {
+          const out = [], now = Date.now();
+          for (const [session, m] of pending) for (const [id, p] of m) {
+            if (!p.alerted && now - p.t > WAIT_MS) { p.alerted = true; out.push({ type: "tool-waiting", session, cwd: p.cwd, t: now, tool: p.tool, since: p.t }); }
+            if (now - p.t > 6 * 3600e3) m.delete(id);
+          }
+          if (out.length) onEvents(out);
+        }, 3000);
         return true;
       } catch (e) { log("live mode unavailable: " + e.message); watcher = null; return false; }
     },
-    stop() { if (watcher) watcher.close(); watcher = null; for (const t of timers.values()) clearTimeout(t); timers.clear(); },
+    stop() { if (watcher) watcher.close(); watcher = null; clearInterval(checker); checker = null; for (const t of timers.values()) clearTimeout(t); timers.clear(); },
     get running() { return !!watcher; },
   };
 }

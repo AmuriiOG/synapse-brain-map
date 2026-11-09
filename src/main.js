@@ -1,7 +1,7 @@
 // Synapse — Electron main process.
 // 100% local: no network requests are made by this app. It reads Claude Code's files on this
 // machine and only ever WRITES marked lines into MEMORY.md files when you link memory (with backups).
-const { app, BrowserWindow, ipcMain, shell, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, dialog, Notification } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { Worker } = require("node:worker_threads");
@@ -10,6 +10,7 @@ const C = require("./core/claude");
 const { PRESETS, DEFAULT_CONFIG } = require("./core/presets");
 const { createLive } = require("./core/live");
 const { demoData, demoLiveTick } = require("./core/demo");
+const Doctor = require("./core/doctor");
 // demo mode: fictional data, nothing read from or written to disk (npm run demo)
 const DEMO = !!process.env.SYNAPSE_DEMO || process.argv.includes("--demo");
 
@@ -39,6 +40,7 @@ function writeConfig(cfg) {
   clean.skipRoots = (cfg.skipRoots || []).map(String);
   clean.teamFolders = (cfg.teamFolders || []).filter((t) => t && t.path && fs.existsSync(t.path)).map((t) => ({ name: String(t.name || path.basename(t.path)), path: String(t.path) }));
   clean.maxFilesPerProject = Math.max(200, Math.min(20000, Number(cfg.maxFilesPerProject) || 4000));
+  clean.alerts = cfg.alerts !== false;
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(clean, null, 2));
   return clean;
@@ -72,6 +74,7 @@ ipcMain.handle("scan", async () => {
   let cached = null;
   if (fresh) cached = fresh;
   else try { cached = JSON.parse(fs.readFileSync(cachePath(), "utf8")); } catch {}
+  if (cached && cached.schema !== require("./core/scan").SCHEMA) cached = null;   // cache from an older version
   if (cached && cached.areas) {
     last = cached;
     if (Date.now() - (cached.generated || 0) > 60 * 1000) {
@@ -171,8 +174,65 @@ ipcMain.handle("mem-unlink", wrap(({ to, share }) => {
   return withState({ results: [M.unlink(B.path, sh.target, backupDir())] });
 }));
 
+// ---------------------------------------------------------------- memory doctor + suggestions
+// The renderer sends indexes from the last scan; paths are resolved here. plan -> preview -> apply -> undo.
+const plans = new Map(), undos = new Map(); let planSeq = 0;
+const projectRoots = () => (last ? last.areas.filter((a) => !a.team).map((a) => a.path) : []);
+function buildFix(spec) {
+  if (spec.type === "command") {
+    const area = spec.area ? areaByKey(spec.area) : null;
+    if (area && area.team) throw new Error("pick a project, not a team folder");
+    return { type: "command", project: area, text: String(spec.text || ""), name: spec.name };
+  }
+  const note = memByIdx(spec.mem), area = note.area ? areaByKey(note.area) : null;
+  if (!area || area.team) throw new Error("this note can't be changed from Synapse");
+  if (spec.type === "index") return { type: "index", note, area };
+  if (spec.type === "link") return { type: "link", note, area, broken: String(spec.broken), replacement: spec.replacement || null };
+  if (spec.type === "merge") { const drop = memByIdx(spec.drop); return { type: "merge", keep: note, drop, area, notes: last.memories.filter((m) => m.area === note.area) }; }
+  throw new Error("unknown fix");
+}
+ipcMain.handle("doctor-targets", wrap(({ mem, broken }) => {
+  const note = memByIdx(mem), same = last.memories.filter((m) => m.kind === "memory" && m.area === note.area && m !== note);
+  return { targets: Doctor.suggestTargets(String(broken), same) };
+}));
+ipcMain.handle("doctor-plan", wrap((spec) => {
+  if (DEMO) throw new Error("demo mode — memory fixes are disabled");
+  const p = Doctor.plan(buildFix(spec)), id = ++planSeq; plans.set(id, p);
+  const home = require("node:os").homedir();
+  return { id, changes: p.changes.map((c) => ({ label: c.label, file: c.file.replace(home, "~"), before: c.before, after: c.after })) };
+}));
+ipcMain.handle("doctor-apply", wrap(({ id }) => {
+  const p = plans.get(id); if (!p) throw new Error("preview expired — open the fix again");
+  plans.delete(id);
+  const r = Doctor.apply(p, backupDir(), projectRoots()), uid = ++planSeq; undos.set(uid, r.undo);
+  runScan().then(() => { if (win) win.webContents.send("scan-updated"); }).catch(() => {});
+  return { applied: r.applied, undo: uid };
+}));
+ipcMain.handle("doctor-undo", wrap(({ undo }) => {
+  const u = undos.get(undo); if (!u) throw new Error("nothing to undo");
+  undos.delete(undo); const r = Doctor.undo(u, projectRoots());
+  runScan().then(() => { if (win) win.webContents.send("scan-updated"); }).catch(() => {});
+  return r;
+}));
+
 // ---------------------------------------------------------------- live mode
-const live = createLive((events) => { if (win && !win.isDestroyed()) win.webContents.send("live", events); }, (m) => console.warn(m));
+const lastAlert = new Map();          // session -> time, so one session can't spam
+function alertFor(e) {
+  if (readConfig().alerts === false || !Notification.isSupported()) return;
+  if (win && !win.isDestroyed() && win.isFocused()) return;          // the window shows it in-app instead
+  if (Date.now() - (lastAlert.get(e.session) || 0) < 20000) return;
+  lastAlert.set(e.session, Date.now());
+  const a = last && last.areas.find((x) => x.key === e.cwd), project = a ? a.name : "Claude";
+  const n = e.type === "turn-end"
+    ? new Notification({ title: `✓ ${project}: your turn`, body: e.text ? e.text.slice(0, 140) : "Claude finished and is waiting for your reply.", silent: false })
+    : new Notification({ title: `⏳ ${project} may be waiting for you`, body: `${e.tool || "A tool"} has been waiting for ${Math.round((Date.now() - e.since) / 1000)}s — a permission prompt, or a long command.` });
+  n.on("click", () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); win.webContents.send("focus-session", e.session); } });
+  n.show();
+}
+const live = createLive((events) => {
+  if (win && !win.isDestroyed()) win.webContents.send("live", events);
+  for (const e of events) if (e.type === "turn-end" || e.type === "tool-waiting") alertFor(e);
+}, (m) => console.warn(m));
 let demoTimer = null;
 ipcMain.handle("live", (_e, on) => {
   if (DEMO) { clearInterval(demoTimer); demoTimer = null; if (on) demoTimer = setInterval(() => { if (win && last) win.webContents.send("live", demoLiveTick(last)); }, 420); return { ok: true }; }

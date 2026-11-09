@@ -1,7 +1,7 @@
 {
   "name": "synapse-brain-map",
   "productName": "Synapse",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A living map of your Claude Code projects: sessions, files, commits and memory — and link memory between projects.",
   "main": "src/main.js",
   "author": {
@@ -34,7 +34,8 @@
     "test:ui": "electron test/features.js",
     "mcp": "node src/mcp.js",
     "demo": "electron . --demo",
-    "record-demo": "electron scripts/record-demo.js"
+    "record-demo": "electron scripts/record-demo.js",
+    "test:doctor": "electron test/doctor-ui.js"
   },
   "build": {
     "appId": "dev.synapse.brainmap",

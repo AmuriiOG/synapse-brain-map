@@ -35,7 +35,9 @@ drag `api-server` onto `web-dashboard`, and every new Claude session in `web-das
 | 🔴 **Live mode** | Watch Claude read and edit files in real time: beams, flashes and a running ticker. |
 | ▶️ **Session replay** | Replay any session's file activity in order. |
 | 💸 **Cost insights** | API-equivalent cost per project, per day and per session, plus lines added and tokens. |
-| 🩺 **Memory health** | Notes missing from `MEMORY.md`, broken `[[links]]`, near-duplicates and stale notes. |
+| 🩺 **Memory doctor** | Finds notes missing from `MEMORY.md`, broken `[[links]]`, near-duplicates and stale notes, and **fixes them in one click**. You see a diff first, every file is backed up, and you can undo right after. |
+| 💡 **Suggestions** | Learns from how you work: **prompts you keep repeating** become a slash command in one click; **files Claude keeps re-reading** get a ready prompt to turn them into a memory note (saves tokens); **files edited over and over** are flagged as refactor candidates. |
+| 🔔 **"Your turn" alerts** | With live mode on, you get a desktop notification when a session finishes and waits for your reply, or when a tool has been waiting a while (usually a permission prompt). Handy with many sessions at once. |
 | 👥 **Team memory** | Point Synapse at a shared folder of notes (e.g. a git repo) and link it into any project. |
 | 🔌 **MCP server** | Claude itself can search memory across all projects, check activity and link memory. |
 | 🎬 **Export** | Save a PNG or record a short video of your map to share. |
@@ -46,6 +48,12 @@ drag `api-server` onto `web-dashboard`, and every new Claude session in `web-das
 </tr><tr>
 <td align="center"><sub>Memory view: projects, their notes, and the links between them</sub></td>
 <td align="center"><sub>Insights: cost per project, per day, per session</sub></td>
+</tr><tr>
+<td><img src="docs/suggestions.png" alt="Suggestions"></td>
+<td><img src="docs/health.png" alt="Memory doctor"></td>
+</tr><tr>
+<td align="center"><sub>Suggestions: repeated prompts → slash commands, re-read and hot files</sub></td>
+<td align="center"><sub>Memory doctor: one-click fixes with a diff preview and undo</sub></td>
 </tr></table>
 
 ## Install
@@ -106,7 +114,7 @@ Then ask Claude things like *"which of my projects has notes about auth tokens?"
 
 Synapse is **100% local**. It makes no network requests and has no telemetry. It reads
 `~/.claude/projects`, `~/.claude/CLAUDE.md` and your project folders. The only thing it ever writes
-is the marked line in a project's `MEMORY.md` when you link memory (plus its own settings and backups).
+is what you explicitly confirm: the marked line in a project's `MEMORY.md` when you link memory, memory-doctor fixes (shown as a diff first, backed up, undoable), and a new slash-command file when you ask for one, never overwriting an existing file. Your project source code is never modified.
 
 ## Settings
 
@@ -118,7 +126,7 @@ is the marked line in a project's `MEMORY.md` when you link memory (plus its own
 
 ## Keyboard
 
-`1`–`7` views · `F` fit · `Esc` close · scroll to zoom · drag to pan · **Shift+drag** a project or note onto a project to link memory
+`1`–`7` views · 📊 insights (cost, memory doctor, suggestions) · `F` fit · `Esc` close · scroll to zoom · drag to pan · **Shift+drag** a project or note onto a project to link memory
 
 ## Development
 

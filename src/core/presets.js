@@ -19,6 +19,7 @@ const DEFAULT_CONFIG = {
   extraRoots: [],               // folders to show even without Claude sessions
   skipRoots: [],                // project names to hide
   maxFilesPerProject: 4000,
+  alerts: true,                 // desktop notification when a session needs you (live mode)
 };
 
 function skipDirsFor(cfg) {

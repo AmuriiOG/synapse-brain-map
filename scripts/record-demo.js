@@ -55,8 +55,13 @@ app.whenReady().then(async () => {
     await js(`dispatchEvent(new KeyboardEvent('keydown',{key:'${k}'}))`); await wait(2600);
     fs.writeFileSync(path.join(OUT, name + ".png"), (await win.webContents.capturePage()).toPNG());
   }
+  await js(`dispatchEvent(new KeyboardEvent('keydown',{key:'1'}))`); await wait(2600);
   await js(`__synapse.showInsights('cost')`); await wait(800);
   fs.writeFileSync(path.join(OUT, "insights.png"), (await win.webContents.capturePage()).toPNG());
+  await js(`__synapse.showInsights('suggest')`); await wait(800);
+  fs.writeFileSync(path.join(OUT, "suggestions.png"), (await win.webContents.capturePage()).toPNG());
+  await js(`__synapse.showInsights('health')`); await wait(800);
+  fs.writeFileSync(path.join(OUT, "health.png"), (await win.webContents.capturePage()).toPNG());
   console.log(`docs/demo.gif: ${frames.length} frames, ${(fs.statSync(path.join(OUT, "demo.gif")).size / 1e6).toFixed(1)} MB`);
   app.quit();
 });

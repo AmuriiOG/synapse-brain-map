@@ -64,6 +64,42 @@ try {
   ok(threw, "refuses to share a file outside Claude's projects folder");
   ok(fs.readFileSync(path.join(alpha, "src", "player.cs"), "utf8") === "class Player {}", "project files are never modified");
 
+  console.log("memory doctor");
+  const Doctor = require("../src/core/doctor");
+  fs.writeFileSync(path.join(amem, "jumping.md"), "---\nname: jumping\ndescription: double jump needs the coyote timer\n---\nCoyote time is 0.1s.\n");
+  fs.writeFileSync(path.join(amem, "physics-tuning.md"), "---\nname: physics-tuning\ndescription: movement is tuned, do not change it\n---\nGravity 30, speed 8. See [[physics]].\n");
+  d = scan(null);
+  const A2 = d.areas.find((a) => a.name === "alpha_game"), note = (n) => d.memories.find((m) => m.name === n);
+  const snap = () => Object.fromEntries(fs.readdirSync(amem).map((f) => [f, sha(path.join(amem, f))]));
+  const before0 = snap();
+  ok(note("jumping").health.issues.some((i) => i.type === "not-indexed"), "health: jumping.md is not in MEMORY.md");
+  ok(note("physics").health.issues.some((i) => i.type === "duplicate"), "health: physics / physics-tuning flagged as duplicates");
+  // 1) add to index
+  let p = Doctor.plan({ type: "index", note: note("jumping"), area: A2 });
+  ok(p.changes.length === 1 && /\[jumping\]\(jumping\.md\)/.test(p.changes[0].after), "plan: add jumping to MEMORY.md (preview only)");
+  ok(sha(path.join(amem, "MEMORY.md")) === before0["MEMORY.md"], "planning writes nothing");
+  const u1 = Doctor.apply(p, path.join(OUT, "bak"));
+  ok(fs.readFileSync(path.join(amem, "MEMORY.md"), "utf8").includes("(jumping.md)"), "apply: index updated");
+  // 2) broken link -> suggested target
+  ok(Doctor.suggestTargets("missing-note", [note("jumping"), note("physics-tuning")]).length >= 0, "suggestTargets runs");
+  const u2 = Doctor.apply(Doctor.plan({ type: "link", note: note("physics"), broken: "missing-note", replacement: "jumping" }), path.join(OUT, "bak"));
+  ok(fs.readFileSync(path.join(amem, "physics.md"), "utf8").includes("[[jumping]]"), "apply: broken [[link]] repointed");
+  // 3) merge duplicates: physics-tuning into physics
+  d = scan(null);
+  const u3 = Doctor.apply(Doctor.plan({ type: "merge", keep: note("physics"), drop: note("physics-tuning"), area: A2, notes: d.memories.filter((m) => m.area === A2.key) }), path.join(OUT, "bak"));
+  ok(!fs.existsSync(path.join(amem, "physics-tuning.md")) && fs.readFileSync(path.join(amem, "physics.md"), "utf8").includes("## Merged from physics-tuning"), "apply: duplicates merged, dropped file removed");
+  // 4) slash command in the project
+  const u4 = Doctor.apply(Doctor.plan({ type: "command", project: B, text: "run the tests and fix anything that fails", name: "Fix Tests" }), path.join(OUT, "bak"), [beta]);
+  ok(fs.existsSync(path.join(beta, ".claude", "commands", "fix-tests.md")), "apply: /fix-tests created in the project");
+  threw = false; try { Doctor.plan({ type: "command", project: B, text: "x", name: "fix-tests" }); } catch { threw = true; }
+  ok(threw, "never overwrites an existing command");
+  threw = false; try { Doctor.apply({ changes: [{ file: path.join(beta, "src", "server.ts"), before: "export {}", after: "hacked" }] }, path.join(OUT, "bak")); } catch { threw = true; }
+  ok(threw && fs.readFileSync(path.join(beta, "src", "server.ts"), "utf8") === "export {}", "refuses to write project source files");
+  // undo everything, newest first -> byte-identical
+  for (const u of [u4, u3, u2, u1]) Doctor.undo(u.undo, [beta]);
+  ok(JSON.stringify(snap()) === JSON.stringify(before0) && !fs.existsSync(path.join(beta, ".claude", "commands", "fix-tests.md")), "undo restores every file byte-for-byte");
+  fs.unlinkSync(path.join(amem, "jumping.md")); fs.unlinkSync(path.join(amem, "physics-tuning.md"));
+
   console.log("team memory");
   const team = path.join(OUT, "team-brain"); fs.mkdirSync(team);
   fs.writeFileSync(path.join(team, "MEMORY.md"), "- [Release checklist](release-checklist.md) — steps before every build\n");

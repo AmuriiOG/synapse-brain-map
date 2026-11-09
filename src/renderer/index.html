@@ -100,6 +100,16 @@
   #panel .issues div { color:#c7a46a; font-size:11px; padding:2px 0; }
   #empty { position:fixed; inset:0; display:none; place-items:center; text-align:center; z-index:8; color:#b8c0d0; line-height:1.7; }
   input[type=checkbox] { width:auto; padding:0; margin:0; accent-color:#7c4dff; cursor:pointer; }
+  #toast.act { pointer-events:auto; } #toast button { margin-left:10px; padding:2px 10px; border-color:#7c4dff; color:#d9c9ff; }
+  #modal.wide .box { width:min(760px, 92vw); max-height:86vh; overflow:auto; }
+  #modal .chg { margin-top:12px; } #modal .chg b { color:#fff; }
+  #modal pre.diff, #modal pre { white-space:pre-wrap; word-break:break-word; background:#0a0c12; border:1px solid #1b2030; border-radius:6px; padding:8px; font-size:11px; max-height:300px; overflow:auto; margin:4px 0 0; }
+  #modal .da { color:#7be05a; } #modal .dl { color:#ff7b93; text-decoration:line-through; text-decoration-color:#ff7b9366; } #modal .dn { color:#6d7588; } #modal .dc { color:#3f4657; }
+  #modal select, #modal input { font:inherit; color:var(--fg); background:#11141c; border:1px solid var(--line); border-radius:5px; padding:5px; }
+  #modal .fld input { width:100%; margin-top:4px; } #modal .fld { display:block; margin-top:10px; color:var(--dim); }
+  button.fix { margin-top:5px; padding:2px 9px; font-size:11px; border-color:#3b2f5c; color:#d9c9ff; }
+  #drawer .sug { padding:7px 0; border-top:1px solid #161a24; } #drawer .sug[data-node] { cursor:pointer; } #drawer .sug i { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; }
+  #drawer .sug span { color:var(--dim); } #drawer .sug > div { font-size:11px; margin-top:2px; color:#c7cfdd; } #drawer .sug b { color:#e8ecf3; }
   #legend { position:fixed; left:16px; bottom:14px; color:var(--dim); z-index:2; font-size:11px; }
 </style>
 </head>
@@ -1004,6 +1014,7 @@ function bindMemoryPanel(n) {
   if ($('bNote')) $('bNote').onclick = () => window.synapse.memOpen(n.mi);
   if ($('bShare')) $('bShare').onclick = () => askShare(n, Number($('selTo').value));
   if ($('bInto')) $('bInto').onclick = () => askLink(n.area, Number($('selInto').value));
+  bindFixButtons(pbody);
 }
 document.getElementById('px').onclick = () => closePanel();
 function closePanel() { focus = null; focusSet = new Set(); panel.classList.remove('open'); }
@@ -1030,7 +1041,7 @@ function openPanel(n) {
     h = `<h3>${esc(n.label)}</h3><div class="meta">${n.kind === 'claudemd' ? 'CLAUDE.md · instructions' : 'memory note' + (n.d.type ? ' · ' + esc(n.d.type) : '')} · ${esc(areaName(n) || 'global')}<br>changed ${fmtDT(n.t)}</div>`
       + (n.d.description ? `<div>${esc(n.d.description)}</div>` : '')
       + (n.d.health ? `<div class="hint">read by ${n.d.health.reads} · edited by ${n.d.health.edits} sessions · last used ${n.d.health.lastUsed ? fmtDT(n.d.health.lastUsed) : 'never (in this window)'}</div>` : '')
-      + (n.d.health && n.d.health.issues.length ? `<div class="issues">${n.d.health.issues.map(i => `<div>⚠ ${esc(i.text)}</div>`).join('')}</div>` : '')
+      + (n.d.health && n.d.health.issues.length ? `<div class="issues">${n.d.health.issues.map(i => `<div>⚠ ${esc(i.text)} ${fixBtn(n, i.type)}</div>`).join('')}</div>` : '')
       + `<pre>${esc(n.d.body)}</pre><button class="open" id="bNote">open note</button>` + memoryNoteSection(n) + '<b>connected</b>';
   } else h = `<h3>CLAUDE</h3><div class="meta">${areas.length} areas</div>`;
   h += '<ul>' + linked.slice(0, 80).map(o => `<li data-id="${o.id}"><span style="color:${o.color}">●</span> ${esc(o.type==='file' ? o.d.rel : o.label)}</li>`).join('') + '</ul>';
@@ -1090,6 +1101,8 @@ function onLiveEvents(evs) {
     } else if (e.type === 'prompt') {
       flash(src, 2200); if (hub) beam(center, hub, '#ff8a3d', 1600);
       tick(`💬 ${esc(e.text)} <span>${esc(hub ? hub.label : '')}</span>`, color);
+    } else if (e.type === 'turn-end' || e.type === 'tool-waiting') {
+      onWaitingEvent(e);
     } else if (e.type === 'tool' && /^(Bash|PowerShell|WebSearch|WebFetch|Agent|Task)$/.test(e.tool)) {
       flash(src, 900); tick(`⚙ ${esc(e.tool)} <span>${esc(hub ? hub.label : '')}</span>`, '#8b93a5');
     }
@@ -1142,7 +1155,7 @@ function showInsights(tab = 'cost') {
   const total = sessNodes.reduce((x, n) => x + sessCost(n), 0);
   const tokens = sessNodes.reduce((x, n) => x + (n.d.tokens ? n.d.tokens.output : 0), 0);
   const lines = sessNodes.reduce((x, n) => x + (n.d.cost ? n.d.cost.linesAdded : 0), 0);
-  let h = `<h3>📊 Insights</h3><div class="tabs"><button data-tab="cost" class="${tab === 'cost' ? 'on' : ''}">Cost</button><button data-tab="health" class="${tab === 'health' ? 'on' : ''}">Memory health</button></div>`;
+  let h = `<h3>📊 Insights</h3><div class="tabs"><button data-tab="cost" class="${tab === 'cost' ? 'on' : ''}">Cost</button><button data-tab="health" class="${tab === 'health' ? 'on' : ''}">Memory health</button><button data-tab="suggest" class="${tab === 'suggest' ? 'on' : ''}">💡 Suggestions</button></div>`;
   if (tab === 'cost') {
     const perArea = areas.filter(a => !a.team).map(a => ({ label: a.name, v: areaCost(a.i), color: a.color, id: hubs[a.i].id })).filter(r => r.v > 0).sort((x, y) => y.v - x.v);
     const dayMap = new Map(); sessNodes.forEach(n => { const d = new Date(n.d.start); d.setHours(0,0,0,0); dayMap.set(+d, (dayMap.get(+d) || 0) + sessCost(n)); });
@@ -1151,6 +1164,8 @@ function showInsights(tab = 'cost') {
     h += `<div class="kpi"><div><b>${money(total)}</b><span>API-equivalent cost · ${D.days}d</span></div><div><b>${kfmt(tokens)}</b><span>output tokens</span></div><div><b>${kfmt(lines)}</b><span>lines added by Claude</span></div></div>
       <div class="hint">"Cost" is what these sessions would cost at API prices, as recorded by Claude Code. On a subscription plan you don't pay this per session.</div>
       <h4>by project</h4>${bars(perArea, money, '#4f8cff')}<h4>by day</h4>${bars(days, money, '#b277ff')}<h4>most expensive sessions</h4>${bars(top, money, '#ff8a3d')}`;
+  } else if (tab === 'suggest') {
+    h += suggestionsHtml();
   } else {
     const issues = []; memNodes.forEach(n => (n.d.health ? n.d.health.issues : []).forEach(i => issues.push({ n, i })));
     const order = ['not-indexed', 'broken-link', 'duplicate', 'no-description', 'stale'];
@@ -1160,12 +1175,13 @@ function showInsights(tab = 'cost') {
     if (!issues.length) h += '<div class="hint">No problems found. 🎉</div>';
     for (const type of order) {
       const rows = issues.filter(x => x.i.type === type); if (!rows.length) continue;
-      h += `<h4>${names[type]} · ${rows.length}</h4>` + rows.map(({ n, i }) => `<div class="iss" data-node="${n.id}"><i style="background:${n.color}"></i><b>${esc(n.label)}</b> <span>${esc(areaName(n) || 'global')}</span><div>${esc(i.text)}</div></div>`).join('');
+      h += `<h4>${names[type]} · ${rows.length}</h4>` + rows.map(({ n, i }) => `<div class="iss" data-node="${n.id}"><i style="background:${n.color}"></i><b>${esc(n.label)}</b> <span>${esc(areaName(n) || 'global')}</span><div>${esc(i.text)}</div>${fixBtn(n, i.i ? i.i.type : i.type)}</div>`).join('');
     }
   }
   openDrawer(h);
   dbody.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => showInsights(b.dataset.tab));
-  dbody.querySelectorAll('[data-node]').forEach(el => el.onclick = () => { const n = nodes[el.dataset.node]; if (tab === 'health' && view !== 'memory') setView('memory'); setTimeout(() => { openPanel(n); cam.tx = n.tx; cam.ty = n.ty; cam.ts = Math.max(cam.ts, (cam.fitS || .4) * 1.8); }, tab === 'health' ? 950 : 0); });
+  bindFixButtons(dbody); if (tab === 'suggest') bindSuggestions();
+  dbody.querySelectorAll('[data-node]').forEach(el => el.onclick = () => { const n = nodes[el.dataset.node]; const mv = tab === 'health' && view !== 'memory'; if (mv) setView('memory'); setTimeout(() => { openPanel(n); cam.tx = n.tx; cam.ty = n.ty; cam.ts = Math.max(cam.ts, (cam.fitS || .4) * 1.8); }, mv ? 950 : 0); });
 }
 $id('bInsights').onclick = () => drawer.classList.contains('open') && dbody.querySelector('.tabs') ? closeDrawer() : showInsights();
 
@@ -1175,6 +1191,7 @@ async function showSettings() {
   const list = (arr, kind) => arr.map((x, i) => `<div class="lk"><span>${esc(kind === 'team' ? x.name + ' — ' + x.path : x)}</span><button data-rm="${kind}:${i}">✕</button></div>`).join('') || '<div class="hint">— none</div>';
   openDrawer(`<h3>⚙ Settings</h3>
     <h4>History</h4><label class="fld">show the last <input id="sDays" type="number" min="1" max="365" value="${c.days}"> days</label>
+    <h4>Alerts</h4><label class="cb"><input type="checkbox" id="sAlerts" ${c.alerts !== false ? 'checked' : ''}> desktop notification when a session finishes or may be waiting for you (needs ● live)</label>
     <h4>Folders to skip while scanning projects</h4>
     <div class="presets">${Object.entries(S.presets).map(([k, p]) => `<label class="cb" title="${esc(p.dirs.join(', '))}"><input type="checkbox" data-preset="${k}" ${c.presets.includes(k) ? 'checked' : ''}> ${esc(p.label)}</label>`).join('')}</div>
     <label class="fld">also skip (comma separated) <input id="sSkip" value="${esc((c.skipDirs || []).join(', '))}" placeholder="RawCaptures, Exports"></label>
@@ -1208,6 +1225,7 @@ async function showSettings() {
   $id('sBackups').onclick = () => window.synapse.openBackups();
   $id('sSave').onclick = async () => {
     cfg.days = Number($id('sDays').value) || 60;
+    cfg.alerts = $id('sAlerts').checked;
     cfg.presets = [...dbody.querySelectorAll('[data-preset]')].filter(x => x.checked).map(x => x.dataset.preset);
     cfg.skipDirs = $id('sSkip').value.split(',').map(x => x.trim()).filter(Boolean);
     cfg.skipRoots = [...dbody.querySelectorAll('[data-root]')].filter(x => !x.checked).map(x => x.dataset.root);
@@ -1257,6 +1275,137 @@ $id('bExport').onclick = async () => {
   const c = await confirmBox('Export', 'Save a picture of the map, or record an 8-second video (Rings → Memory → Circle) to share.', 'Record video', 'Save picture');
   if (c === true) exportVideo(8); else if (c === 'alt') exportPng();
 };
+
+// ================================================================ MEMORY DOCTOR + SUGGESTIONS
+// line diff (LCS) for the fix preview: only changed lines with a little context
+function diffHtml(before, after) {
+  const a = before === null ? [] : before.split(/\r?\n/), b = after === null ? [] : after.split(/\r?\n/);
+  if (a.length * b.length > 400000) return `<span class="dl">− ${a.length} lines</span>\n<span class="da">+ ${b.length} lines</span>`;
+  const L = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const ops = []; let i = 0, j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) { ops.push([' ', a[i]]); i++; j++; }
+    else if (j < b.length && (i >= a.length || L[i][j + 1] >= L[i + 1][j])) ops.push(['+', b[j++]]);
+    else ops.push(['-', a[i++]]);
+  }
+  const keep = ops.map((o, k) => o[0] !== ' ' || ops.slice(Math.max(0, k - 2), k + 3).some(x => x[0] !== ' '));
+  let out = '', skipped = false;
+  ops.forEach((o, k) => {
+    if (!keep[k]) { if (!skipped) out += '<span class="dc">⋯</span>\n'; skipped = true; return; }
+    skipped = false;
+    out += o[0] === '+' ? `<span class="da">+ ${esc(o[1])}</span>\n` : o[0] === '-' ? `<span class="dl">− ${esc(o[1])}</span>\n` : `<span class="dn">  ${esc(o[1])}</span>\n`;
+  });
+  return out || '<span class="dc">(no change)</span>';
+}
+function toastAction(msg, label, fn) {
+  toastEl.innerHTML = `${esc(msg)} <button id="tAct">${esc(label)}</button>`; toastEl.className = 'show act';
+  $id('tAct').onclick = () => { toastEl.className = ''; fn(); };
+  clearTimeout(toast.t); toast.t = setTimeout(() => toastEl.className = '', 9000);
+}
+function dropIssue(n, type) { if (n && n.d.health) n.d.health.issues = n.d.health.issues.filter(i => i.type !== type); liveVer++; }
+function refreshAfterFix(n) {
+  if (drawer.classList.contains('open') && dbody.querySelector('.tabs')) showInsights(dbody.querySelector('.tabs .on') ? dbody.querySelector('.tabs .on').dataset.tab : 'health');
+  if (focus && n && focus === n) openPanel(n);
+}
+// plan -> show diff -> apply -> offer undo
+async function previewAndApply(spec, title, onDone) {
+  const r = await window.synapse.doctorPlan(spec);
+  if (!r.ok) { toast('✕ ' + r.error, true); return; }
+  if (!r.changes.length) { toast('nothing to change'); onDone && onDone(); return; }
+  const html = `<div class="hint">Synapse will make these changes. Every file is backed up first and you can undo right after.</div>` +
+    r.changes.map(c => `<div class="chg"><b>${esc(c.label)}</b><div class="hint">${esc(c.file)}</div><pre class="diff">${diffHtml(c.before, c.after)}</pre></div>`).join('');
+  modal.classList.add('wide');
+  const ok = await confirmBox(title, html, 'Apply');
+  modal.classList.remove('wide');
+  if (!ok) return;
+  const a = await window.synapse.doctorApply(r.id);
+  if (!a.ok) { toast('✕ ' + a.error, true); return; }
+  onDone && onDone();
+  toastAction(`✓ done — ${a.applied} file${a.applied > 1 ? 's' : ''} changed`, '↶ Undo', async () => {
+    const u = await window.synapse.doctorUndo(a.undo);
+    toast(u.ok ? '↶ undone — files restored' : '✕ ' + u.error, !u.ok);
+  });
+}
+async function fixIssue(n, type) {
+  if (type === 'not-indexed') return previewAndApply({ type: 'index', mem: n.mi }, `Add "${n.label}" to MEMORY.md`, () => { dropIssue(n, type); refreshAfterFix(n); });
+  if (type === 'broken-link') {
+    const broken = (n.d.links || []).filter(l => !memNodes.some(m => m.d.name.toLowerCase() === l.toLowerCase() || m.d.file.replace(/\.md$/, '').toLowerCase() === l.toLowerCase()));
+    if (!broken.length) { toast('no broken link left'); dropIssue(n, type); return; }
+    const t = await window.synapse.doctorTargets(n.mi, broken[0]);
+    const opts = (t.ok ? t.targets : []).map(x => `<option value="${esc(x)}">→ [[${esc(x)}]]</option>`).join('');
+    const ok = await confirmBox('Fix a broken link', `In <b>${esc(n.label)}</b>, <code>[[${esc(broken[0])}]]</code> points to a note that doesn't exist.<br><br>
+      <select id="fxTarget" style="width:100%">${opts}<option value="">remove the link, keep the words</option></select>`, 'Preview');
+    if (!ok) return;
+    const rep = $id('fxTarget').value || null;
+    return previewAndApply({ type: 'link', mem: n.mi, broken: broken[0], replacement: rep }, 'Fix broken link', () => { if (broken.length === 1) dropIssue(n, type); refreshAfterFix(n); });
+  }
+  if (type === 'duplicate') {
+    const sims = (n.d.health.similar || []).map(s => memNodes.find(m => m.mi === s.j)).filter(m => m && m.area === n.area);
+    if (!sims.length) { toast('the similar note is in another project — link the projects instead', true); return; }
+    const ok = await confirmBox('Merge duplicate notes', `Keep <b>${esc(n.label)}</b> and merge into it:<br><br><select id="fxDrop" style="width:100%">${sims.map(m => `<option value="${m.mi}">${esc(m.label)}</option>`).join('')}</select>
+      <div class="hint" style="margin-top:8px">The other note's text is appended under a heading, its file is removed (kept in the backup), MEMORY.md and [[links]] are updated.</div>`, 'Preview');
+    if (!ok) return;
+    const drop = Number($id('fxDrop').value);
+    return previewAndApply({ type: 'merge', mem: n.mi, drop }, 'Merge notes', () => { dropIssue(n, type); dropIssue(memNodes.find(m => m.mi === drop), type); refreshAfterFix(n); });
+  }
+}
+const FIXABLE = { 'not-indexed': 'add to MEMORY.md', 'broken-link': 'fix link', duplicate: 'merge' };
+const fixBtn = (n, type) => FIXABLE[type] && n.area !== undefined && !areas[n.area].team ? `<button class="fix" data-fix="${n.id}:${type}">🩺 ${FIXABLE[type]}</button>` : '';
+function bindFixButtons(root) {
+  root.querySelectorAll('[data-fix]').forEach(b => b.onclick = ev => { ev.stopPropagation(); const [id, type] = b.dataset.fix.split(':'); fixIssue(nodes[Number(id)], type); });
+}
+
+// ---- suggestions: repeated prompts -> slash command, re-read files -> memory note, churn -> refactor
+const SUG = D.suggestions || { prompts: [], rereads: [], churn: [] };
+const copy = (text, msg) => navigator.clipboard.writeText(text).then(() => toast(msg || '✓ copied — paste it into Claude'));
+const slugOf = t => t.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().split(/\s+/).slice(0, 3).join('-').slice(0, 30) || 'my-command';
+async function makeCommand(p) {
+  const projs = p.areas.map(k => areas[areaIdx.get(k)]).filter(Boolean);
+  const ok = await confirmBox('Make it a slash command', `You typed this in <b>${p.sessions}</b> sessions:<pre>${esc(p.text.slice(0, 300))}</pre>
+    <label class="fld">command name <input id="fxName" value="${esc(slugOf(p.text))}"></label>
+    <label class="fld">available in <select id="fxWhere" style="width:100%">${projs.map(a => `<option value="${esc(a.key)}">${esc(a.name)} only (.claude/commands)</option>`).join('')}<option value="">all my projects (~/.claude/commands)</option></select></label>`, 'Preview');
+  if (!ok) return;
+  const name = $id('fxName').value.trim(), where = $id('fxWhere').value || null;
+  return previewAndApply({ type: 'command', area: where, text: p.text, name }, 'Create slash command', () => toast(`✓ type /${slugOf(name)} in Claude Code`));
+}
+const rereadPrompt = r => `Read ${r.rel} and save a memory note with what future sessions need to know about it (purpose, key types/functions, gotchas), so they don't have to re-read the whole file. It was read ${r.times} times on ${r.days} different days.`;
+const churnPrompt = r => `${r.rel} was edited ${r.times} times on ${r.days} different days. Review it and propose a refactor that would make future changes smaller and safer. Plan first, don't change code yet.`;
+function suggestionsHtml() {
+  const fileRow = (r, kind) => { const fn = fileByP.get(r.area + '/' + r.rel.toLowerCase()) || fileNodes.find(f => f.d.area === r.area && f.d.rel === r.rel); const a = areas[areaIdx.get(r.area)];
+    return `<div class="sug" ${fn ? `data-node="${fn.id}"` : ''}><i style="background:${a ? a.color : '#888'}"></i><b>${esc(r.rel.split('/').pop())}</b> <span>${esc(a ? a.name : '')}</span>
+      <div>${kind === 'read' ? 'read' : 'edited'} <b>${r.times}×</b> on ${r.days} days${r.cost ? ` · sessions cost ${money(r.cost)}` : ''}</div>
+      <div class="hint">${esc(r.rel)}</div><button class="fix" data-copy="${kind}:${esc(r.f)}">📋 copy prompt for Claude</button></div>`; };
+  let h = `<div class="hint">Patterns in how you work with Claude, and one-click ways to act on them.</div>`;
+  h += `<h4>💬 Prompts you keep repeating · ${SUG.prompts.length}</h4>` + (SUG.prompts.length ? SUG.prompts.map((p, i) => `<div class="sug"><b>“${esc(p.text.slice(0, 110))}${p.text.length > 110 ? '…' : ''}”</b>
+      <div>${p.sessions} sessions · ${p.count}× · ${p.areas.map(k => esc((areas[areaIdx.get(k)] || {}).name || '')).join(', ')}</div>
+      <button class="fix" data-cmd="${i}">⚡ make it a slash command</button></div>`).join('') : '<div class="hint">none yet — prompts typed in 3+ sessions show up here</div>');
+  h += `<h4>👁 Files Claude keeps re-reading · ${SUG.rereads.length}</h4><div class="hint">A memory note summarizing them saves tokens and time in every session.</div>` + (SUG.rereads.map(r => fileRow(r, 'read')).join('') || '<div class="hint">none</div>');
+  h += `<h4>✎ Files edited over and over · ${SUG.churn.length}</h4><div class="hint">Refactor candidates: big or tangled files make every change slower.</div>` + (SUG.churn.map(r => fileRow(r, 'edit')).join('') || '<div class="hint">none</div>');
+  return h;
+}
+function bindSuggestions() {
+  dbody.querySelectorAll('[data-cmd]').forEach(b => b.onclick = ev => { ev.stopPropagation(); makeCommand(SUG.prompts[Number(b.dataset.cmd)]); });
+  dbody.querySelectorAll('[data-copy]').forEach(b => b.onclick = ev => { ev.stopPropagation(); const [kind, f] = b.dataset.copy.split(':');
+    const r = (kind === 'read' ? SUG.rereads : SUG.churn).find(x => String(x.f) === f); copy(kind === 'read' ? rereadPrompt(r) : churnPrompt(r)); });
+}
+
+// ---- "Claude is waiting for you": in-app toast + ticker (the OS notification comes from the main process)
+const waiting = new Map();    // session -> event
+function onWaitingEvent(e) {
+  const hub = hubByKey.get(e.cwd), name = hub ? hub.label : 'a session', sn = sessById.get(e.session);
+  if (hub) { flash(hub, 4000); beam(center, hub, e.type === 'turn-end' ? '#7be05a' : '#ffb84d', 1800); }
+  if (sn) flash(sn, 4000);
+  waiting.set(e.session, e);
+  if (e.type === 'turn-end') { tick(`✓ <b>${esc(name)}</b>: your turn <span>${esc((e.text || '').slice(0, 70))}</span>`, '#7be05a'); if (document.hasFocus()) toastAction(`✓ ${name}: Claude finished — your turn`, 'show', () => focusSession(e.session)); }
+  else { tick(`⏳ <b>${esc(name)}</b> may be waiting <span>${esc(e.tool || '')} · ${Math.round((Date.now() - e.since) / 1000)}s</span>`, '#ffb84d'); if (document.hasFocus()) toastAction(`⏳ ${name} may be waiting for you (${e.tool || 'tool'})`, 'show', () => focusSession(e.session)); }
+}
+function focusSession(id) {
+  const sn = sessById.get(id), w = waiting.get(id), hub = w ? hubByKey.get(w.cwd) : null, n = sn && sn.alpha > .2 ? sn : hub;
+  if (!n) return;
+  openPanel(n); cam.tx = n.x; cam.ty = n.y; cam.ts = Math.max(cam.ts, (cam.fitS || .4) * 1.5);
+}
+window.synapse.onFocusSession(focusSession);
 
 // ---------------------------------------------------------------- go: burst out from the center
 window.__synapse = { openPanel: n => openPanel(n), hubs, memNodes, areas, sessNodes, onLiveEvents: e => onLiveEvents(e), showInsights: t => showInsights(t), showSettings: () => showSettings(), startReplay: n => startReplay(n), get beams() { return beams.length; } };
