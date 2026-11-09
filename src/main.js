@@ -88,14 +88,72 @@ ipcMain.handle("scan", async () => {
 });
 ipcMain.handle("rescan", async () => { if (DEMO) return { ok: true }; last = await runScan(); return { ok: true }; });
 
+// ---------------------------------------------------------------- MCP: how Claude Code starts Synapse
+// The registered command must point at a path that stays put. The portable .exe unpacks itself into
+// a temp folder that disappears, so for the portable build we point at the installed copy instead.
+const os = require("node:os");
+const isTempDir = (p) => /[\\/](temp|tmp)[\\/]/i.test(p) || p.startsWith(os.tmpdir());
+function installedExe() {
+  const c = process.platform === "win32" ? path.join(process.env.LOCALAPPDATA || "", "Programs", "Synapse", "Synapse.exe")
+    : process.platform === "darwin" ? "/Applications/Synapse.app/Contents/MacOS/Synapse" : null;
+  return c && fs.existsSync(c) ? c : null;
+}
+function mcpLaunch() {
+  if (!app.isPackaged) return { command: process.platform === "win32" ? "node" : "node", args: [path.join(__dirname, "mcp.js")], env: { SYNAPSE_CONFIG: configPath() } };
+  let exe = process.execPath;
+  if (process.env.PORTABLE_EXECUTABLE_FILE || isTempDir(exe)) exe = installedExe();
+  if (!exe) return { error: "You're running the portable Synapse, which lives in a temporary folder. Install Synapse (Synapse Setup .exe) so Claude Code has a fixed path to start it." };
+  const res = process.platform === "darwin" ? path.join(path.dirname(exe), "..", "Resources") : path.join(path.dirname(exe), "resources");
+  return { command: exe, args: [path.join(res, "app.asar.unpacked", "src", "mcp.js")], env: { ELECTRON_RUN_AS_NODE: "1", SYNAPSE_CONFIG: configPath() } };
+}
+const q = (s) => /\s/.test(s) ? `"${s}"` : s;
+function mcpCommandText(l) {
+  if (l.error) return "# " + l.error;
+  return `claude mcp add synapse --scope user ${Object.entries(l.env).map(([k, v]) => `--env ${k}=${q(v)}`).join(" ")} -- ${q(l.command)} ${l.args.map(q).join(" ")}`;
+}
+// what Claude Code has registered (read-only look at ~/.claude.json) + our heartbeat file
+function mcpStatus() {
+  const want = mcpLaunch(), out = { recommended: mcpCommandText(want), canConnect: !want.error, problem: want.error || null };
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".claude.json"), "utf8"));
+    const user = j.mcpServers && j.mcpServers.synapse;
+    const projects = Object.entries(j.projects || {}).filter(([, v]) => v.mcpServers && v.mcpServers.synapse).map(([k]) => k);
+    const reg = user || (projects.length ? j.projects[projects[0]].mcpServers.synapse : null);
+    out.registered = !!reg; out.scope = user ? "user" : projects.length ? "project" : null;
+    if (reg) {
+      const script = (reg.args || []).find((a) => /mcp\.js$/i.test(a)) || "";
+      out.command = [reg.command, ...(reg.args || [])].join(" ");
+      out.broken = (reg.command !== "node" && !fs.existsSync(reg.command)) || (script && !fs.existsSync(script));
+      out.temporary = isTempDir(reg.command || "") || isTempDir(script);
+      out.outdated = !want.error && (reg.command !== want.command || script !== want.args[0]);
+    }
+  } catch { out.registered = false; }
+  try { out.heartbeat = JSON.parse(fs.readFileSync(userFile("mcp-status.json"), "utf8")); } catch { out.heartbeat = null; }
+  out.claudeCli = findClaude();
+  return out;
+}
+function findClaude() {
+  const names = process.platform === "win32" ? ["claude.exe", "claude.cmd"] : ["claude"];
+  const dirs = [...String(process.env.PATH || "").split(path.delimiter), path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".claude", "local")];
+  for (const d of dirs) for (const n of names) { const f = path.join(d, n); if (d && fs.existsSync(f)) return f; }
+  return null;
+}
+ipcMain.handle("mcp-status", () => mcpStatus());
+// register Synapse with Claude Code (user scope) using the claude CLI — only when the user clicks "connect"
+ipcMain.handle("mcp-connect", async () => {
+  const l = mcpLaunch(); if (l.error) return { ok: false, error: l.error };
+  const cli = findClaude(); if (!cli) return { ok: false, error: "The claude command wasn't found. Run the command shown in Settings in a terminal instead." };
+  const run = (args) => new Promise((res) => require("node:child_process").execFile(cli, args, { windowsHide: true, timeout: 60000, shell: /\.cmd$/i.test(cli) }, (err, stdout, stderr) => res({ err, out: String(stdout) + String(stderr) })));
+  await run(["mcp", "remove", "synapse", "--scope", "user"]);          // replace an old/broken registration
+  const r = await run(["mcp", "add", "synapse", "--scope", "user", ...Object.entries(l.env).flatMap(([k, v]) => ["--env", `${k}=${v}`]), "--", l.command, ...l.args]);
+  if (r.err) return { ok: false, error: r.out.trim().slice(0, 400) || r.err.message };
+  return { ok: true, status: mcpStatus() };
+});
+
 // ---------------------------------------------------------------- settings
 ipcMain.handle("get-settings", () => {
-  const exe = process.execPath, mcpScript = unpacked(path.join(__dirname, "mcp.js"));
-  const mcp = app.isPackaged
-    ? `claude mcp add synapse --scope user --env ELECTRON_RUN_AS_NODE=1 --env SYNAPSE_CONFIG="${configPath()}" -- "${exe}" "${mcpScript}"`
-    : `claude mcp add synapse --scope user --env SYNAPSE_CONFIG="${configPath()}" -- node "${mcpScript}"`;
   return { config: readConfig(), presets: Object.fromEntries(Object.entries(PRESETS).map(([k, v]) => [k, { label: v.label, dirs: v.dirs }])),
-    paths: { claudeHome: C.CLAUDE_HOME, userData: app.getPath("userData"), backups: backupDir() }, mcp, version: app.getVersion() };
+    paths: { claudeHome: C.CLAUDE_HOME, userData: app.getPath("userData"), backups: backupDir() }, mcp: mcpCommandText(mcpLaunch()), mcpStatus: mcpStatus(), version: app.getVersion() };
 });
 ipcMain.handle("set-settings", (_e, cfg) => { try { const c = writeConfig(cfg); live.setLimits({ stuckUsd: c.stuckUsd }); return { ok: true, config: c }; } catch (e) { return { ok: false, error: e.message }; } });
 ipcMain.handle("pick-folder", async (_e, title) => {

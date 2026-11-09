@@ -111,6 +111,10 @@
   #drawer .sug { padding:7px 0; border-top:1px solid #161a24; } #drawer .sug[data-node] { cursor:pointer; } #drawer .sug i { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; }
   #drawer .sug span { color:var(--dim); } #drawer .sug > div { font-size:11px; margin-top:2px; color:#c7cfdd; overflow-wrap:anywhere; } #drawer .sug b { color:#e8ecf3; }
   #drawer code { color:#ffb3c0; font-size:10.5px; } #modal textarea { font:inherit; color:var(--fg); background:#11141c; border:1px solid var(--line); border-radius:5px; padding:6px; resize:vertical; }
+  button.mcp.off { color:#8b93a5; } button.mcp.ready { color:#7fb3ff; border-color:#2b4a7a; } button.mcp.ok { color:#7be05a; border-color:#2f5a26; }
+  button.mcp.warn { color:#ffb84d; border-color:#6b4a1a; } button.mcp.bad { color:#ff7b93; border-color:#6b2433; }
+  .mcpbox { border:1px solid #2a3142; border-radius:6px; padding:8px 10px; margin:6px 0; line-height:1.5; }
+  .mcpbox.ok { border-color:#2f5a26; background:#0f1a0d; } .mcpbox.warn { border-color:#6b4a1a; background:#1a140a; } .mcpbox.bad { border-color:#6b2433; background:#1a0d10; } .mcpbox.ready { border-color:#2b4a7a; background:#0d1320; }
   #legend { position:fixed; left:16px; bottom:14px; color:var(--dim); z-index:2; font-size:11px; }
 </style>
 </head>
@@ -125,6 +129,7 @@
   <button class="tog on" id="bNames">names</button>
   <button class="tog on" id="bMotion">motion</button>
   <input id="search" placeholder="⌕ search">
+  <button class="mcp off" id="bMcp" title="Claude Code connection (MCP)">🔌 MCP</button>
   <button class="tog" id="bLive" title="live mode: watch Claude work in real time">● live</button>
   <button id="bInsights" title="cost and memory health">📊</button>
   <button id="bExport" title="export a picture or a video">⤓</button>
@@ -1207,7 +1212,8 @@ async function showSettings() {
     <div id="lsTeam">${list(c.teamFolders || [], 'team')}</div><div class="row"><button id="sAddTeam">+ add team folder</button></div>
     <h4>🔌 Let Claude use Synapse (MCP)</h4>
     <div class="hint">Run this once in a terminal. Claude Code can then search memory across all projects, see project activity, check memory health and link memory.</div>
-    <pre id="sMcp">${esc(S.mcp)}</pre><div class="row"><button id="sCopy">copy command</button></div>
+    <div id="sMcpStatus">${mcpStatusHtml()}</div>
+    <div class="hint">or run it yourself in a terminal:</div><pre id="sMcp">${esc(S.mcp)}</pre><div class="row"><button id="sCopy">copy command</button></div>
     <h4>🔒 Privacy</h4>
     <div class="hint">Synapse is 100% local. It makes no network requests and has no telemetry. It reads Claude Code's files in <b>${esc(S.paths.claudeHome)}</b> and your project folders. The only thing it ever writes is one marked line in a project's MEMORY.md when you link memory, with a backup first.</div>
     <div class="row"><button id="sBackups">open backups folder</button></div>
@@ -1225,6 +1231,8 @@ async function showSettings() {
     const r = await window.synapse.initTeamFolder(d); if (!r.ok) { toast('✕ ' + r.error, true); return; }
     cfg.teamFolders = cfg.teamFolders || []; if (!cfg.teamFolders.some(t => t.path === d)) cfg.teamFolders.push({ name: d.split(/[\\/]/).pop(), path: d }); rerender();
   };
+  mcpState = S.mcpStatus || mcpState; $id('sMcpStatus').innerHTML = mcpStatusHtml();
+  $id('sMcpStatus').onclick = ev => { if (ev.target.id === 'mcpGo') mcpConnectFlow(); };
   $id('sCopy').onclick = () => { navigator.clipboard.writeText(S.mcp).then(() => toast('✓ copied — paste it in a terminal')); };
   $id('sBackups').onclick = () => window.synapse.openBackups();
   $id('sSave').onclick = async () => {
@@ -1411,6 +1419,62 @@ function focusSession(id) {
   openPanel(n); cam.tx = n.x; cam.ty = n.y; cam.ts = Math.max(cam.ts, (cam.fitS || .4) * 1.5);
 }
 window.synapse.onFocusSession(focusSession);
+// ================================================================ MCP CONNECTION STATUS
+// Is Synapse registered in Claude Code, does the path still exist, and has Claude actually used it?
+const ago = t => { const s = Math.round((Date.now() - t) / 1000); return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' days ago'; };
+let mcpState = null;
+function mcpView(st) {
+  if (!st) return { cls: 'off', label: 'MCP', tip: 'checking…' };
+  const hb = st.heartbeat;
+  if (!st.registered) return { cls: 'off', label: 'MCP', tip: 'Not connected to Claude Code. Click to connect.', text: 'Not connected. Claude Code doesn\'t know about Synapse yet.' };
+  if (st.broken) return { cls: 'bad', label: 'MCP ⚠', tip: 'Connection is broken: the registered path no longer exists. Click to repair.', text: 'Broken: Claude Code points at a file that no longer exists, so it can\'t start Synapse.' };
+  if (st.temporary) return { cls: 'warn', label: 'MCP ⚠', tip: 'Connected through a temporary folder; it will break. Click to repair.', text: 'Connected, but through a temporary folder (the portable .exe). It will break when that folder is cleaned up.' };
+  if (hb && hb.lastCall && Date.now() - hb.lastCall < 7 * 86400e3) return { cls: 'ok', label: 'MCP ●', tip: `Connected · Claude last used it ${ago(hb.lastCall)} (${hb.lastTool})`, text: `Connected ✓ Claude last used it <b>${ago(hb.lastCall)}</b> (${esc(hb.lastTool || '')}) · ${hb.calls} call${hb.calls === 1 ? '' : 's'} in that session.` };
+  if (hb && hb.lastSeen) return { cls: 'ok', label: 'MCP ●', tip: `Connected · a Claude session started it ${ago(hb.lastSeen)}`, text: `Connected ✓ A Claude session started Synapse ${ago(hb.lastSeen)}${hb.client ? ' (' + esc(hb.client) + ')' : ''}. No tool used yet.` };
+  return { cls: 'ready', label: 'MCP', tip: 'Registered in Claude Code. Start a new Claude session to use it.', text: 'Registered ✓ Start a <b>new</b> Claude Code session; Synapse shows "used" here once Claude calls it.' };
+}
+async function refreshMcp() {
+  try { mcpState = await window.synapse.mcpStatus(); } catch { return; }
+  const v = mcpView(mcpState), b = $id('bMcp');
+  b.textContent = '🔌 ' + v.label; b.className = 'mcp ' + v.cls; b.title = v.tip;
+  if ($id('sMcpStatus')) $id('sMcpStatus').innerHTML = mcpStatusHtml();
+}
+function mcpStatusHtml() {
+  const st = mcpState, v = mcpView(st);
+  if (!st) return '';
+  const fix = st.registered && (st.broken || st.temporary || st.outdated);
+  return `<div class="mcpbox ${v.cls}">${v.text || v.tip}</div>` +
+    (st.problem ? `<div class="hint" style="color:#ffb84d">${esc(st.problem)}</div>` : '') +
+    (st.canConnect ? `<div class="row"><button class="primary" id="mcpGo">${!st.registered ? '🔌 connect to Claude Code' : fix ? '🛠 repair connection' : '↻ re-register'}</button></div>` : '') +
+    `<div class="hint">Check it inside Claude Code with <code>/mcp</code>. Claude Code only loads MCP servers when a session starts.</div>`;
+}
+async function mcpConnectFlow() {
+  if (!mcpState) await refreshMcp();
+  const st = mcpState;
+  if (!st.canConnect) { toast('✕ ' + st.problem, true); return; }
+  const ok = await confirmBox(st.registered ? 'Repair the Claude Code connection' : 'Connect Synapse to Claude Code',
+    `Synapse will run this for you (user scope, so every project can use it):<pre>${esc(st.recommended)}</pre>` +
+    (st.registered ? `<div class="hint">It replaces the current registration:<br><code>${esc(st.command || '')}</code></div>` : '') +
+    `<div class="hint">Then start a new Claude Code session and type <code>/mcp</code>; you should see <b>synapse ✔ connected</b>.</div>`, st.registered ? 'Repair' : 'Connect');
+  if (!ok) return;
+  const r = await window.synapse.mcpConnect();
+  if (!r.ok) { toast('✕ ' + r.error, true); return; }
+  mcpState = r.status; refreshMcp();
+  toast('✓ connected — start a new Claude session and type /mcp');
+}
+$id('bMcp').onclick = async () => {
+  await refreshMcp();
+  const st = mcpState, v = mcpView(st);
+  if (!st.registered || st.broken || st.temporary) return mcpConnectFlow();
+  const hb = st.heartbeat;
+  const ok = await confirmBox('Synapse ↔ Claude Code', `<div class="mcpbox ${v.cls}">${v.text}</div>
+    <div class="hint" style="margin-top:8px">Registered (${esc(st.scope || '')} scope):<br><code>${esc(st.command || '')}</code></div>
+    ${hb ? `<div class="hint">Synapse MCP v${esc(hb.version || '?')} · started ${ago(hb.startedAt)}${hb.client ? ' by ' + esc(hb.client) : ''}</div>` : ''}
+    <div class="hint" style="margin-top:6px">Try asking Claude: <i>"which of my projects has notes about auth?"</i></div>`, '↻ re-register');
+  if (ok) mcpConnectFlow();
+};
+refreshMcp(); setInterval(refreshMcp, 20000);
+
 // ================================================================ THINGS ONE CLAUDE SESSION CAN'T SEE
 // ---- repeated mistakes -> a memory rule, so new sessions stop making them
 const RULES = [

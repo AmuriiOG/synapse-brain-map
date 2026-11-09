@@ -107,9 +107,24 @@ const TOOLS = [
 
 // ---------------------------------------------------------------- JSON-RPC over stdio
 const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\n");
+const VERSION = (() => { try { return require("../package.json").version; } catch { return "0"; } })();
+
+// Heartbeat: the Synapse app reads this file to show "connected · used 3 min ago".
+// Only times, counts and tool names — never arguments or results.
+const STATUS = path.join(DATA_DIR, "mcp-status.json");
+const hb = { version: VERSION, pid: process.pid, startedAt: Date.now(), lastSeen: Date.now(), calls: 0, lastTool: null, lastCall: null, client: null };
+function beat(extra) {
+  Object.assign(hb, extra, { lastSeen: Date.now() });
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(STATUS, JSON.stringify(hb)); } catch {}
+}
+
 function handle(req) {
   const { id, method, params } = req;
-  if (method === "initialize") return send({ id, result: { protocolVersion: (params && params.protocolVersion) || "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "synapse", version: "0.1.0" } } });
+  if (method === "initialize") {
+    beat({ client: params && params.clientInfo ? `${params.clientInfo.name || ""} ${params.clientInfo.version || ""}`.trim() : null });
+    return send({ id, result: { protocolVersion: (params && params.protocolVersion) || "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "synapse", version: VERSION } } });
+  }
+  if (method === "tools/call") beat({ calls: hb.calls + 1, lastTool: params && params.name, lastCall: Date.now() });
   if (method === "ping") return send({ id, result: {} });
   if (method === "tools/list") return send({ id, result: { tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) } });
   if (method === "tools/call") {

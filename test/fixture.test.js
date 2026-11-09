@@ -140,6 +140,10 @@ try {
   ok(/release-checklist \[team-brain\]/.test(lines[4].result.content[0].text), "search_memory finds team notes");
   ok(/removed/.test(lines[5].result.content[0].text), "unlink_memory: " + lines[5].result.content[0].text);
   ok(fs.readFileSync(path.join(M.memDirFor(beta), "MEMORY.md"), "utf8").trim() === "", "beta's MEMORY.md is clean again");
+  const hbFile = path.join(path.dirname(process.env.SYNAPSE_CONFIG), "mcp-status.json");
+  const hb = fs.existsSync(hbFile) ? JSON.parse(fs.readFileSync(hbFile, "utf8")) : {};
+  ok(hb.calls === 4 && hb.lastTool === "unlink_memory" && hb.lastCall > 0, "heartbeat written for the app (4 calls, last: unlink_memory)");
+  ok(!JSON.stringify(hb).includes("alpha_game"), "heartbeat holds no arguments or results");
 } finally {
   fs.rmSync(OUT, { recursive: true, force: true });
 }
